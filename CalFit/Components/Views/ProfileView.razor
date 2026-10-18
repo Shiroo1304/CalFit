@@ -1,0 +1,65 @@
+@inject CalFitApi Api
+@inject AuthSession Session
+
+<div class="screen">
+   <header class="page-heading">
+    <div>
+        <span class="eyebrow">PERSONAL WELLNESS</span>
+        <h1>My profile.</h1>
+        <p>Your goals, your progress, your journey.</p>
+    </div>
+
+    <button type="button"
+        class="heading-icon settings-button"
+        aria-label="Settings"
+        @onclick="OpenSettingsPage">
+    ⚙
+</button>
+</header>
+
+    <div class="profile-banner"><div class="profile-avatar">@Initial</div><div><strong>@(profile?.Name ?? "CalFit member")</strong><small>@(profile?.Email ?? "Loading account details…")</small></div><span class="profile-spark">✦</span></div>
+    @if (loading) { <div class="skeleton">Loading your profile…</div> }
+    else if (!string.IsNullOrWhiteSpace(error) && profile == null) { <div class="notice error">@error <button class="inline-link" @onclick="LoadAsync">Retry</button></div> }
+    else if (profile != null)
+    {
+        <div class="section-head"><div><span class="eyebrow">YOUR INFORMATION</span><h2>Personal details</h2></div></div>
+        <div class="surface form-surface"><label class="field-label">Full name</label><input class="field" @bind="profile.Name" maxlength="100"/><div class="two-col"><div><label class="field-label">Height (cm)</label><input type="number" class="field" step="0.1" min="1" @bind="profile.HeightCm" /></div><div><label class="field-label">Weight (kg)</label><input type="number" class="field" step="0.1" min="1" @bind="profile.WeightKg" /></div></div>
+            @if (Bmi > 0) { <div class="bmi-banner"><span>BODY MASS INDEX</span><strong>@Bmi.ToString("0.0")</strong><span>@BmiCategory</span></div> }
+        </div>
+        <div class="section-head"><div><span class="eyebrow">DAILY TARGETS</span><h2>Nutrition goals</h2></div></div>
+        <div class="surface form-surface"><div class="two-col"><div><label class="field-label">Calorie goal (kcal)</label><input type="number" min="1" class="field" @bind="profile.CalorieGoal" /></div><div><label class="field-label">Protein (g)</label><input type="number" min="0" step="0.1" class="field" @bind="profile.ProteinGoal" /></div><div><label class="field-label">Carbs (g)</label><input type="number" min="0" step="0.1" class="field" @bind="profile.CarbsGoal" /></div><div><label class="field-label">Fat (g)</label><input type="number" min="0" step="0.1" class="field" @bind="profile.FatGoal" /></div></div>
+            @if (!string.IsNullOrWhiteSpace(message)) { <div class="notice @(hasError ? "error" : "success")">@message</div> }
+            <button class="btn btn-primary full" disabled="@saving" @onclick="SaveAsync">@(saving ? "Saving…" : "Save profile & goals →")</button></div>
+        <div class="section-head"><h2>Account</h2></div><div class="settings-list"><button @onclick="SignOutAsync"><span>⇥</span><div><strong>Sign out</strong></div><span>›</span></button></div>
+    }
+    <div class="bottom-whitespace"></div>
+</div>
+@code {
+    [Parameter]
+    public EventCallback OpenSettings { get; set; }
+    private async Task OpenSettingsPage() {await OpenSettings.InvokeAsync();}
+    private UserProfile? profile;
+    private bool loading, saving, hasError;
+    private string error = "", message = "";
+    private string Initial => (profile?.Name?.Length > 0 ? profile.Name[..1] : "C").ToUpperInvariant();
+    private double Bmi => profile?.HeightCm is > 0 && profile?.WeightKg is > 0 ? profile.WeightKg.Value / Math.Pow(profile.HeightCm.Value / 100, 2) : 0;
+    private string BmiCategory => Bmi < 18.5 ? "Underweight" : Bmi < 25 ? "Healthy range" : Bmi < 30 ? "Overweight" : "Higher BMI";
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true; error = "";
+        try { var current = await Api.GetProfileAsync(Session.Token!); profile = new UserProfile { Id=current.Id, Name=current.Name, Email=current.Email, CalorieGoal=current.CalorieGoal, ProteinGoal=current.ProteinGoal, CarbsGoal=current.CarbsGoal, FatGoal=current.FatGoal, HeightCm=current.HeightCm, WeightKg=current.WeightKg }; }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; }
+    }
+    private async Task SaveAsync()
+    {
+        if (profile == null || saving) return;
+        if (string.IsNullOrWhiteSpace(profile.Name) || profile.CalorieGoal is < 1 or > 20000 || profile.ProteinGoal < 0 || profile.CarbsGoal < 0 || profile.FatGoal < 0 || (profile.HeightCm.HasValue && profile.HeightCm <= 0) || (profile.WeightKg.HasValue && profile.WeightKg <= 0)) { message = "Enter a valid name, calorie goal, macros and body measurements."; hasError = true; return; }
+        saving = true;
+        try { await Api.UpdateProfileAsync(Session.Token!, profile); await Session.RefreshProfileAsync(); message = "Profile and daily goals updated."; hasError = false; }
+        catch (Exception ex) { message = ex.Message; hasError = true; }
+        finally { saving = false; }
+    }
+    private Task SignOutAsync() => Session.SignOutAsync();
+}

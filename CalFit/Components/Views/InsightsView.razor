@@ -1,0 +1,39 @@
+@inject CalFitApi Api
+@inject AuthSession Session
+<div class="screen"><header class="page-heading"><div><span class="eyebrow">BEYOND THE NUMBERS</span><h1>Your insights<span class="accent">.</span></h1><p>A clearer picture of your eating habits.</p></div></header>
+    <div class="section-head"><div><span class="eyebrow">LAST 7 DAYS</span><h2>Calorie trends</h2></div><button class="text-link" @onclick="LoadAsync" disabled="@loading">Refresh ↻</button></div>
+    @if (loading) { <div class="skeleton">Building your nutrition report…</div> }
+    else if (!string.IsNullOrWhiteSpace(error)) { <div class="notice error">@error <button class="inline-link" @onclick="LoadAsync">Retry</button></div> }
+    else
+    {
+        <div class="surface trend-card"><div class="insights-head"><div><span class="eyebrow">DAILY AVERAGE</span><div class="insights-value">@AverageCalories.ToString("N0") <span>kcal</span></div></div><span class="trend-pill">7 DAYS</span></div><div class="chart-area">@foreach (var day in days) { <div class="chart-day"><span class="bar-number">@(day.Calories > 0 ? day.Calories.ToString("N0") : "")</span><div class="bar-track"><div class="chart-bar @(day.Date.Date == DateTime.Today ? "today" : "")" style="height:@BarHeight(day.Calories)%"></div></div><small>@day.Date.ToString("ddd")</small></div> }</div><div class="chart-legend">▰ Daily intake &nbsp;·&nbsp; Goal: @(Session.Profile?.CalorieGoal ?? 2000) kcal</div></div>
+        <div class="stat-grid"><div class="stat-card"><span class="stat-icon">▤</span><small>MEALS LOGGED</small><strong>@allMeals.Count(x => LocalDay(x.CreateAT) >= DateTime.Today.AddDays(-6))</strong><p>Past seven days</p></div><div class="stat-card"><span class="stat-icon">✧</span><small>DAYS TRACKED</small><strong>@days.Count(x => x.Calories > 0) <span>/ 7</span></strong><p>Keep up the habit</p></div></div>
+        <div class="section-head"><span class="eyebrow">PERSONALIZED OBSERVATIONS</span><h2>Your weekly recap</h2></div><div class="insight-stack"><div class="insight-item"><span class="insight-icon">✦</span><div><strong>Tracking consistency</strong><p>@(days.Count(x => x.Calories > 0) == 0 ? "No meals logged in the past week. Scan a meal to get started." : $"You've recorded meals on {days.Count(x => x.Calories > 0)} out of 7 days. Consistency matters more than perfection.")</p></div></div><div class="insight-item"><span class="insight-icon">◈</span><div><strong>Daily intake overview</strong><p>@(days.Count(x => x.Calories > 0) == 0 ? "Your average will appear once meals are logged." : $"Across all seven days, your average is {AverageCalories:N0} kcal per day against a goal of {Session.Profile?.CalorieGoal ?? 2000:N0} kcal.")</p></div></div></div>
+        <p class="disclaimer">These observations are calculated from saved meal data, not AI-generated medical advice. Missing logs are treated as zero intake.</p>
+    }
+    <div class="bottom-whitespace"></div></div>
+@code {
+    private List<Meal> allMeals = new();
+    private List<DayStat> days = new();
+    private bool loading;
+    private string error = "";
+    private int AverageCalories => (int)Math.Round(days.Count == 0 ? 0 : days.Average(x => x.Calories));
+    private int BarHeight(int calories) => calories <= 0 ? 1 : Math.Clamp((int)Math.Round(100.0 * calories / Math.Max(1, days.Max(x => x.Calories))), 4, 100);
+    private static DateTime LocalDay(DateTime utc) => (utc.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(utc, DateTimeKind.Utc) : utc).ToLocalTime();
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true; error = "";
+        try
+        {
+            allMeals = await Api.GetAllMealsAsync(Session.Token!);
+            days = Enumerable.Range(0, 7).Select(i => {
+                DateTime day = DateTime.Today.AddDays(i - 6);
+                return new DayStat(day, allMeals.Where(x => LocalDay(x.CreateAT).Date == day.Date).Sum(x => x.Calories));
+            }).ToList();
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; }
+    }
+    private sealed record DayStat(DateTime Date, int Calories);
+}

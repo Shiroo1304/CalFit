@@ -1,0 +1,467 @@
+
+@inject CalFitApi Api
+@inject AuthSession Session
+
+<div class="screen">
+
+    <!-- DASHBOARD HEADER -->
+    <header class="page-heading">
+        <div>
+            <span class="eyebrow">
+                @DateTime.Now.ToString("dddd, MMMM d")
+            </span>
+
+            <h1>
+                Hi! @DisplayName
+                <span class="wave">✳</span>
+            </h1>
+
+            <p>Here's how you're fueling today.</p>
+        </div>
+    </header>
+
+    <!-- DAILY CALORIE INTAKE -->
+    <section class="hero-panel">
+        <div class="hero-glow"></div>
+
+        <div class="hero-label">
+            <span>DAILY CALORIE INTAKE</span>
+
+            <span class="hero-tag">
+                @(consumed <= goal ? "● ON TRACK" : "● PAST GOAL")
+            </span>
+        </div>
+
+        <div class="hero-middle">
+            <div>
+                <div class="hero-value">
+                    @consumed.ToString("N0")
+                    <span>kcal</span>
+                </div>
+
+                <div class="hero-caption">
+                    of @goal.ToString("N0") daily goal
+                </div>
+
+                <div class="hero-remaining">
+                    <strong>
+                        @Math.Abs(goal - consumed).ToString("N0")
+                    </strong>
+                    kcal @(consumed > goal ? "over target" : "remaining")
+                </div>
+            </div>
+
+            <div class="calorie-ring"
+                 style="--ring-progress:@Percent.ToString(System.Globalization.CultureInfo.InvariantCulture)%">
+
+                <div class="ring-inner">
+                    <strong>@Percent%</strong>
+                    <span>consumed</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="hero-footer">
+            <span>✦ Small steps, stronger habits.</span>
+
+            <button class="hero-link"
+                    @onclick="() => OpenScanner.InvokeAsync()">
+                Add meal ↗
+            </button>
+        </div>
+    </section>
+
+    <!-- MACRONUTRIENTS -->
+    <div class="section-head">
+        <div>
+            <span class="eyebrow">TODAY'S BALANCE</span>
+            <h2>Macros at a glance</h2>
+        </div>
+    </div>
+
+    <div class="macro-row">
+
+        <!-- PROTEIN -->
+        <div class="macro-card">
+            <span class="macro-dot green"></span>
+            <small>Protein</small>
+
+            <strong>
+                @protein.ToString("0.#")
+                <span>g</span>
+            </strong>
+
+            <div class="progress-track">
+                <i style="width:@MacroPct(protein, Session.Profile?.ProteinGoal ?? 120)%"></i>
+            </div>
+
+            <span class="macro-target">
+                of @(Session.Profile?.ProteinGoal ?? 120)g
+            </span>
+        </div>
+
+        <!-- CARBS -->
+        <div class="macro-card">
+            <span class="macro-dot sky"></span>
+            <small>Carbs</small>
+
+            <strong>
+                @carbs.ToString("0.#")
+                <span>g</span>
+            </strong>
+
+            <div class="progress-track sky">
+                <i style="width:@MacroPct(carbs, Session.Profile?.CarbsGoal ?? 250)%"></i>
+            </div>
+
+            <span class="macro-target">
+                of @(Session.Profile?.CarbsGoal ?? 250)g
+            </span>
+        </div>
+
+        <!-- FATS -->
+        <div class="macro-card">
+            <span class="macro-dot peach"></span>
+            <small>Fats</small>
+
+            <strong>
+                @fat.ToString("0.#")
+                <span>g</span>
+            </strong>
+
+            <div class="progress-track peach">
+                <i style="width:@MacroPct(fat, Session.Profile?.FatGoal ?? 65)%"></i>
+            </div>
+
+            <span class="macro-target">
+                of @(Session.Profile?.FatGoal ?? 65)g
+            </span>
+        </div>
+    </div>
+
+    <!-- QUICK ACTIONS -->
+    <div class="section-head">
+        <h2>Quick actions</h2>
+    </div>
+
+    <div class="action-grid">
+
+        <button class="action-card action-primary"
+                @onclick="() => OpenScanner.InvokeAsync()">
+
+            <span class="action-graphic">◎</span>
+            <strong>AI food scan</strong>
+            <small>Identify and track meals</small>
+            <span class="action-arrow">↗</span>
+        </button>
+
+        <button class="action-card"
+                @onclick="() => OpenDevice.InvokeAsync()">
+
+            <span class="action-graphic">▣</span>
+            <strong>CalFit device</strong>
+            <small>Connection &amp; setup</small>
+            <span class="action-arrow">↗</span>
+        </button>
+
+    </div>
+
+    <!-- RECENT MEALS -->
+    <div class="section-head">
+        <div>
+            <h2>Recent meals</h2>
+
+            <p class="small muted">
+                @selectedDate.ToString("MMM d") · @mealCount recorded
+            </p>
+        </div>
+
+        <button class="text-link"
+                @onclick="() => OpenMeals.InvokeAsync()">
+            View all →
+        </button>
+    </div>
+
+    <!-- DATE SELECTION -->
+    <div class="date-toolbar">
+
+        <button class="date-arrow"
+                @onclick="PreviousDate"
+                aria-label="Previous day">
+            ‹
+        </button>
+
+        <input aria-label="Select day"
+               type="date"
+               value="@selectedDate.ToString("yyyy-MM-dd")"
+               @onchange="SelectDate" />
+
+        <button class="date-arrow"
+                @onclick="NextDate"
+                aria-label="Next day">
+            ›
+        </button>
+
+        <button class="date-today"
+                @onclick="Today">
+            Today
+        </button>
+
+    </div>
+
+    <!-- MEAL HISTORY STATES -->
+    @if (loading)
+    {
+        <div class="skeleton">
+            Loading your nutrition data…
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="notice error">
+            @error
+
+            <button class="inline-link"
+                    @onclick="LoadAsync">
+                Retry
+            </button>
+        </div>
+    }
+    else if (meals.Count == 0)
+    {
+        <div class="empty-state">
+            <div class="empty-symbol">♧</div>
+
+            <strong>No meals yet</strong>
+
+            <p>
+                Start tracking your food to see your progress.
+            </p>
+
+            <button class="btn btn-outline"
+                    @onclick="() => OpenScanner.InvokeAsync()">
+                Add your first meal
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="meal-list">
+
+            @foreach (var item in meals.Take(4))
+            {
+                <div class="meal-item" @key="item.Id">
+
+                    <span class="meal-emoji">
+                        @MealIcon(item.MealType)
+                    </span>
+
+                    <div class="meal-info">
+                        <strong>@item.FoodName</strong>
+
+                        <small>
+                            @item.MealType ·
+                            @item.WeightGrams.ToString("0.#") g
+                        </small>
+                    </div>
+
+                    <div class="meal-energy">
+                        <strong>@item.Calories</strong>
+                        <small>kcal</small>
+                    </div>
+
+                </div>
+            }
+
+        </div>
+    }
+
+    <div class="bottom-whitespace"></div>
+
+</div>
+
+@code {
+
+    // NAVIGATION CALLBACKS
+    [Parameter]
+    public EventCallback OpenScanner { get; set; }
+
+    [Parameter]
+    public EventCallback OpenMeals { get; set; }
+
+    [Parameter]
+    public EventCallback OpenDevice { get; set; }
+
+
+    // DASHBOARD STATE
+    private DateTime selectedDate = DateTime.Today;
+
+    private bool loading;
+
+    private string error = "";
+
+    private List<Meal> meals = new();
+
+    private int consumed;
+    private int goal = 2000;
+    private int mealCount;
+
+    private double protein;
+    private double carbs;
+    private double fat;
+
+
+    // USER DISPLAY NAME
+    private string DisplayName =>
+        string.IsNullOrWhiteSpace(Session.Profile?.Name)
+            ? "there"
+            : Session.Profile!.Name
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? "there";
+
+
+    // CALORIE PROGRESS
+    private int Percent =>
+        Math.Clamp(
+            (int)Math.Round(
+                100.0 * consumed / Math.Max(1, goal)
+            ),
+            0,
+            100
+        );
+
+
+    // MACRONUTRIENT PROGRESS
+    private static int MacroPct(double amount, double target)
+    {
+        return (int)Math.Clamp(
+            Math.Round(
+                100 * amount / Math.Max(1, target)
+            ),
+            0,
+            100
+        );
+    }
+
+
+    // MEAL CATEGORY ICON
+    private static string MealIcon(string? category)
+    {
+        return category?.ToLowerInvariant() switch
+        {
+            "breakfast" => "☀",
+            "lunch" => "◈",
+            "dinner" => "☾",
+            _ => "✦"
+        };
+    }
+
+
+    // INITIALIZE DASHBOARD
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+
+    // LOAD NUTRITION DATA
+    private async Task LoadAsync()
+    {
+        if (!Session.IsSignedIn)
+            return;
+
+        loading = true;
+        error = "";
+
+        try
+        {
+            var profileTask =
+                Session.Profile == null
+                    ? Session.RefreshProfileAsync()
+                    : Task.CompletedTask;
+
+            var dashboardTask =
+                Api.GetDashboardAsync(
+                    Session.Token!,
+                    selectedDate
+                );
+
+            var mealsTask =
+                Api.GetMealsAsync(
+                    Session.Token!,
+                    selectedDate
+                );
+
+            await Task.WhenAll(
+                profileTask,
+                dashboardTask,
+                mealsTask
+            );
+
+            var summary = await dashboardTask;
+
+            meals = await mealsTask;
+
+            consumed = summary.CaloriesConsumed;
+
+            goal = Math.Max(
+                1,
+                Session.Profile?.CalorieGoal
+                    ?? summary.CalorieGoal
+            );
+
+            protein = summary.ProteinGrams;
+            carbs = summary.CarbsGrams;
+            fat = summary.FatGrams;
+            mealCount = summary.MealCount;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+
+    // PREVIOUS DATE
+    private async Task PreviousDate()
+    {
+        selectedDate = selectedDate.AddDays(-1);
+        await LoadAsync();
+    }
+
+
+    // NEXT DATE
+    private async Task NextDate()
+    {
+        if (selectedDate.Date >= DateTime.Today)
+            return;
+
+        selectedDate = selectedDate.AddDays(1);
+        await LoadAsync();
+    }
+
+
+    // RETURN TO TODAY
+    private async Task Today()
+    {
+        selectedDate = DateTime.Today;
+        await LoadAsync();
+    }
+
+
+    // SELECT DATE
+    private async Task SelectDate(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(
+                e.Value?.ToString(),
+                out var date))
+        {
+            selectedDate = date.Date;
+            await LoadAsync();
+        }
+    }
+}

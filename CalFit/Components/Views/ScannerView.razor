@@ -1,0 +1,111 @@
+@using System.Globalization
+@using Microsoft.Maui.Media
+@using Microsoft.Maui.Storage
+@inject CalFitApi Api
+@inject AuthSession Session
+@inject MealNotesService Notes
+<div class="screen">
+    <header class="page-heading"><div><span class="eyebrow">SMART NUTRITION</span><h1>Food scanner<span class="accent">.</span></h1><p>Snap, analyze, review and log.</p></div><div class="heading-icon">◎</div></header>
+    <div class="scanner-feature"><div class="scanner-grid-overlay"></div>
+        @if (!string.IsNullOrWhiteSpace(previewData)) { <img class="food-preview" src="@previewData" alt="Selected food"/> }
+        else { <div class="scanner-illustration"><div class="lens">◉</div><strong>Your next meal starts here</strong><p>Take a photo or choose one from your gallery.</p></div> }
+        <span class="scanner-corner top-left"></span><span class="scanner-corner top-right"></span><span class="scanner-corner bottom-left"></span><span class="scanner-corner bottom-right"></span>
+    </div>
+    <div class="button-row photo-actions"><button class="btn btn-primary" @onclick="TakePhotoAsync" disabled="@busy">◎ Take photo</button><button class="btn btn-outline" @onclick="ChoosePhotoAsync" disabled="@busy">▧ Gallery</button></div>
+    <div class="scanner-tip"><span>✧</span> CalFit AI estimates nutrition from images. You can correct everything before saving.</div>
+    <div class="section-head"><div><span class="eyebrow">MEAL DETAILS</span><h2>Review your plate</h2></div><button class="text-link" @onclick="Clear">Reset ↻</button></div>
+    <div class="surface form-surface"><label class="field-label">Food name</label><input class="field" placeholder="e.g. Chicken adobo with rice" @bind="foodName" />
+        <div class="two-col"><div><label class="field-label">Meal type</label><select class="field" @bind="mealType"><option>Breakfast</option><option>Lunch</option><option>Dinner</option><option>Snack</option></select></div><div><label class="field-label">Food weight (g) · optional</label><input class="field" type="number" min="0" step="0.1" placeholder="Leave blank if unknown" @bind="weight" /></div></div>
+        <button class="btn btn-ai full" @onclick="AnalyzeAsync" disabled="@(busy || string.IsNullOrWhiteSpace(photoPath))">@(analyzing ? "Analyzing your food…" : "✦ Analyze with CalFit AI")</button>
+        <div class="two-col"><div><label class="field-label">Calories (kcal)</label><input class="field" type="number" min="1" step="1" @bind="calories" /></div><div><label class="field-label">Protein (g)</label><input class="field" type="number" min="0" step="0.1" @bind="protein" /></div><div><label class="field-label">Carbs (g)</label><input class="field" type="number" min="0" step="0.1" @bind="carbs" /></div><div><label class="field-label">Fat (g)</label><input class="field" type="number" min="0" step="0.1" @bind="fat" /></div></div>
+        <label class="field-label">Ingredients (optional)</label><textarea class="field textarea" rows="2" @bind="ingredients" placeholder="List ingredients and quantities. AI notes may be incomplete."></textarea>
+        <label class="field-label">Notes (optional)</label><textarea class="field textarea" rows="2" @bind="notes" placeholder="Your own meal notes"></textarea>
+        @if (!string.IsNullOrWhiteSpace(message)) { <div class="notice @(hasError ? "error" : "success")" role="status">@message</div> }
+        <button class="btn btn-primary full save-meal" @onclick="SaveAsync" disabled="@busy">@(saving ? "Saving meal…" : "Save to my food journal →")</button>
+    </div>
+    <button class="device-banner" @onclick="() => OpenDevice.InvokeAsync()"><span>▣</span><span><strong>CalFit hardware scale</strong><small>Manual weight works now; hardware pairing requires device firmware/API.</small></span><span>›</span></button>
+    <div class="bottom-whitespace"></div>
+</div>
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OpenDevice { get; set; }
+    private string foodName = "", mealType = "Lunch", weight = "", calories = "", protein = "", carbs = "", fat = "", ingredients = "", notes = "", message = "";
+    private string? photoPath, previewData;
+    private bool busy, analyzing, saving, hasError;
+    private int fileRevision;
+    private async Task TakePhotoAsync()
+    {
+        if (busy) return;
+        try
+        {
+            if (!MediaPicker.Default.IsCaptureSupported) { Show("Camera capture is not available on this device.", true); return; }
+            var result = await MediaPicker.Default.CapturePhotoAsync();
+            if (result != null) await UsePhotoAsync(result);
+        }
+        catch (Exception ex) { Show("Unable to capture the photo: " + ex.Message, true); }
+    }
+    private async Task ChoosePhotoAsync()
+    {
+        if (busy) return;
+        try { var result = await MediaPicker.Default.PickPhotoAsync(); if (result != null) await UsePhotoAsync(result); }
+        catch (Exception ex) { Show("Unable to open the gallery: " + ex.Message, true); }
+    }
+    private async Task UsePhotoAsync(FileResult file)
+    {
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp")) { Show("Please choose a JPG, PNG or WebP image.", true); return; }
+        string path = Path.Combine(FileSystem.CacheDirectory, $"calfit_{Guid.NewGuid():N}{ext}");
+        await using (var source = await file.OpenReadAsync())
+        await using (var target = File.Create(path)) await source.CopyToAsync(target);
+        if (new FileInfo(path).Length > 10 * 1024 * 1024) { File.Delete(path); Show("Photo exceeds the 10 MB API limit.", true); return; }
+        if (photoPath != null && File.Exists(photoPath)) File.Delete(photoPath);
+        photoPath = path; fileRevision++;
+        var bytes = await File.ReadAllBytesAsync(path);
+        string mime = ext switch { ".png" => "image/png", ".webp" => "image/webp", _ => "image/jpeg" };
+        previewData = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+        Show("Photo ready. Enter weight for better AI estimates, then tap Analyze.", false);
+    }
+    private static double Parse(string input) => double.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out double n) ? n : double.TryParse(input, NumberStyles.Float, CultureInfo.CurrentCulture, out n) ? n : double.NaN;
+    private async Task AnalyzeAsync()
+    {
+        if (busy || photoPath == null) return;
+        busy = true; analyzing = true; message = ""; var version = fileRevision;
+        try
+        {
+            double w = Parse(weight);
+            var result = await Api.AnalyzeAsync(Session.Token!, photoPath, w > 0 && double.IsFinite(w) ? w : null);
+            if (version != fileRevision) return;
+            if (!result.IsFood) { Show("The image does not appear to contain food.", true); return; }
+            foodName = result.FoodName; calories = result.Calories.ToString(CultureInfo.InvariantCulture); protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture); carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture); fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
+            // An image is not a scale: do not silently replace food weight with an AI estimate.
+            if (!string.IsNullOrWhiteSpace(result.Notes)) notes = result.Notes;
+            Show("AI estimate ready. Please verify the food, weight and nutrition before saving.", false);
+        }
+        catch (Exception ex) { Show(ex.Message, true); }
+        finally { busy = false; analyzing = false; }
+    }
+    private async Task SaveAsync()
+    {
+        if (busy) return;
+        double w = string.IsNullOrWhiteSpace(weight) ? 0 : Parse(weight), p = string.IsNullOrWhiteSpace(protein) ? 0 : Parse(protein), c = string.IsNullOrWhiteSpace(carbs) ? 0 : Parse(carbs), f = string.IsNullOrWhiteSpace(fat) ? 0 : Parse(fat);
+        if (string.IsNullOrWhiteSpace(foodName) || !int.TryParse(calories, out int kcal) || kcal <= 0 || !double.IsFinite(w) || w < 0 || !double.IsFinite(p) || p < 0 || !double.IsFinite(c) || c < 0 || !double.IsFinite(f) || f < 0)
+        { Show("Enter a food name and positive calories. Weight and macros can be blank; if entered, they must be non-negative numbers.", true); return; }
+        busy = true; saving = true; message = "";
+        try
+        {
+            var saved = await Api.SaveMealAsync(Session.Token!, new Meal { FoodName = foodName.Trim(), MealType = mealType, WeightGrams = w, Calories = kcal, ProteinGrams = p, CarbsGrams = c, FatGrams = f });
+            if (!string.IsNullOrWhiteSpace(ingredients) || !string.IsNullOrWhiteSpace(notes)) Notes.Save(saved.UserId, saved.Id, new() { Ingredients = ingredients, Note = notes });
+            Clear();
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex) { Show("Could not save meal: " + ex.Message, true); }
+        finally { busy = false; saving = false; }
+    }
+    private void Show(string text, bool failure) { message = text; hasError = failure; }
+    private void Clear()
+    {
+        foodName = ""; weight = ""; calories = ""; protein = ""; carbs = ""; fat = ""; ingredients = ""; notes = ""; mealType = "Lunch"; message = ""; previewData = null; fileRevision++;
+        if (photoPath != null && File.Exists(photoPath)) File.Delete(photoPath);
+        photoPath = null;
+    }
+}

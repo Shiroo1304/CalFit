@@ -1,0 +1,20 @@
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+
+# Local secrets and configuration
+**/appsettings.Development.json
+**/secrets.json
+.env
+.env.*
+*.pfx
+*.keystore
+*.jks
+
+# Local databases
+*.mdf
+*.ldf
+*.db
+*.sqlite

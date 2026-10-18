@@ -1,0 +1,166 @@
+@inject CalFitApi Api
+@inject AuthSession Session
+@inject MealNotesService Notes
+
+<div class="screen">
+    <header class="page-heading">
+        <div>
+            <span class="eyebrow">YOUR FOOD JOURNAL</span>
+            <h1>Meal history<span class="accent">.</span></h1>
+            <p>Every meal tells your story.</p>
+        </div>
+    </header>
+
+    <div class="summary-strip">
+        <div><small>RECORDED MEALS</small><strong>@Filtered.Count</strong></div>
+        <div><small>TOTAL CALORIES</small><strong>@Filtered.Sum(m => m.Calories).ToString("N0") <span>kcal</span></strong></div>
+    </div>
+
+    <div class="search-row">
+        <input class="field search" placeholder="⌕  Search your meals" @bind="search" @bind:event="oninput" />
+        <button class="btn btn-outline" @onclick="() => OpenScanner.InvokeAsync()">＋ Add</button>
+    </div>
+
+    <div class="filter-row">
+        <button class="chip @(category == "All" ? "active" : "")" @onclick='() => SetCategory("All")'>All</button>
+        @foreach (var option in new[] { "Breakfast", "Lunch", "Dinner", "Snack" })
+        {
+            <button class="chip @(category == option ? "active" : "")" @onclick="() => SetCategory(option)">@option</button>
+        }
+    </div>
+
+    @if (loading)
+    {
+        <div class="skeleton">Loading your saved meals…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="notice error">@error <button class="inline-link" @onclick="LoadAsync">Retry</button></div>
+    }
+    else if (Filtered.Count == 0)
+    {
+        <div class="empty-state">
+            <div class="empty-symbol">◌</div>
+            <strong>Nothing here yet</strong>
+            <p>Your saved meals will appear here.</p>
+            <button class="btn btn-primary" @onclick="() => OpenScanner.InvokeAsync()">Log a meal</button>
+        </div>
+    }
+    else
+    {
+        @foreach (var group in Filtered.GroupBy(x => LocalDay(x.CreateAT).Date))
+        {
+            <div class="history-heading">
+                <strong>@(group.Key.Date == DateTime.Today ? "Today" : group.Key.Date == DateTime.Today.AddDays(-1) ? "Yesterday" : group.Key.ToString("ddd, MMM d"))</strong>
+                <small>@group.Count() meals</small>
+            </div>
+            <div class="meal-list">
+                @foreach (var meal in group)
+                {
+                    <button type="button" class="meal-item clickable" @key="meal.Id" @onclick="() => OpenDetails(meal)">
+                        <span class="meal-emoji">@Icon(meal.MealType)</span>
+                        <span class="meal-info">
+                            <strong>@meal.FoodName</strong>
+                            <small>@meal.MealType · @LocalDay(meal.CreateAT).ToString("h:mm tt")</small>
+                        </span>
+                        <span class="meal-energy"><strong>@meal.Calories</strong><small>kcal</small></span>
+                        <span class="chevron">›</span>
+                    </button>
+                }
+            </div>
+        }
+    }
+
+    @if (chosen != null)
+    {
+        <div class="modal-scrim" @onclick="CloseDetails">
+            <div class="detail-modal" role="dialog" aria-modal="true" aria-label="Meal Details" @onclick:stopPropagation="true">
+                <div class="modal-top">
+                    <span class="eyebrow">MEAL DETAILS</span>
+                    <button type="button" class="icon-button" aria-label="Close" @onclick="CloseDetails">✕</button>
+                </div>
+
+                <h2>@chosen.FoodName</h2>
+                <p class="muted small">@chosen.MealType · @LocalDay(chosen.CreateAT).ToString("MMM d, yyyy • h:mm tt")</p>
+
+                <div class="detail-numbers">
+                    <div><small>CALORIES</small><strong>@chosen.Calories</strong></div>
+                    <div><small>WEIGHT</small><strong>@chosen.WeightGrams.ToString("0.#")g</strong></div>
+                </div>
+
+                <div class="detail-macros">
+                    <span>Protein <b>@chosen.ProteinGrams.ToString("0.#")g</b></span>
+                    <span>Carbs <b>@chosen.CarbsGrams.ToString("0.#")g</b></span>
+                    <span>Fat <b>@chosen.FatGrams.ToString("0.#")g</b></span>
+                </div>
+
+                <div class="meal-information">
+                    <h3>Meal information</h3>
+                    <div class="meal-information-row"><span>Food</span><strong>@chosen.FoodName</strong></div>
+                    <div class="meal-information-row"><span>Meal type</span><strong>@chosen.MealType</strong></div>
+                    <div class="meal-information-row"><span>Date recorded</span><strong>@LocalDay(chosen.CreateAT).ToString("MMM d, yyyy")</strong></div>
+                    <div class="meal-information-row"><span>Time recorded</span><strong>@LocalDay(chosen.CreateAT).ToString("h:mm tt")</strong></div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="meal-detail-field">
+                    <label class="field-label" for="meal-ingredients">Ingredients (stored on this phone)</label>
+                    <textarea id="meal-ingredients" class="field textarea" rows="2" @bind="localIngredients" placeholder="e.g. Rice, chicken, vegetables"></textarea>
+                </div>
+
+                <div class="meal-detail-field">
+                    <label class="field-label" for="meal-personal-note">Personal note (stored on this phone)</label>
+                    <textarea id="meal-personal-note" class="field textarea" rows="3" @bind="localNote" placeholder="How did it taste?"></textarea>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(actionError))
+                {
+                    <div class="notice error">@actionError</div>
+                }
+
+                <div class="button-row">
+                    <button type="button" class="btn btn-primary" @onclick="SaveNotes">Save notes</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseDetails">Close</button>
+                </div>
+                <button type="button" class="danger-link" @onclick="RequestDelete" disabled="@deleting">
+                    @(deleteConfirm ? "Tap again to permanently delete this meal" : "Delete this meal")
+                </button>
+            </div>
+        </div>
+    }
+
+    <div class="bottom-whitespace"></div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OpenScanner { get; set; }
+    private List<Meal> meals = new();
+    private bool loading, deleting, deleteConfirm;
+    private string search = "", category = "All", error = "", actionError = "", localIngredients = "", localNote = "";
+    private Meal? chosen;
+    private List<Meal> Filtered => meals.Where(x => (category == "All" || x.MealType.Equals(category, StringComparison.OrdinalIgnoreCase)) && (string.IsNullOrWhiteSpace(search) || x.FoodName.Contains(search, StringComparison.OrdinalIgnoreCase))).ToList();
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true; error = "";
+        try { meals = await Api.GetAllMealsAsync(Session.Token!); }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; }
+    }
+    private static DateTime LocalDay(DateTime utc) => (utc.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(utc, DateTimeKind.Utc) : utc).ToLocalTime();
+    private static string Icon(string? mealType) => mealType?.ToLowerInvariant() switch { "breakfast" => "☀", "lunch" => "◈", "dinner" => "☾", _ => "✦" };
+    private void SetCategory(string option) { category = option; }
+    private void OpenDetails(Meal meal) { chosen = meal; var extra = Notes.Get(meal.UserId, meal.Id); localIngredients = extra.Ingredients; localNote = extra.Note; deleteConfirm = false; actionError = ""; }
+    private void CloseDetails() { chosen = null; deleteConfirm = false; }
+    private void SaveNotes() { if (chosen == null) return; Notes.Save(chosen.UserId, chosen.Id, new() { Ingredients = localIngredients, Note = localNote }); CloseDetails(); }
+    private async Task RequestDelete()
+    {
+        if (chosen == null || deleting) return;
+        if (!deleteConfirm) { deleteConfirm = true; return; }
+        deleting = true; actionError = "";
+        try { await Api.DeleteMealAsync(Session.Token!, chosen.Id); Notes.Delete(chosen.UserId, chosen.Id); meals.RemoveAll(m => m.Id == chosen.Id); CloseDetails(); }
+        catch (Exception ex) { actionError = ex.Message; deleteConfirm = false; }
+        finally { deleting = false; }
+    }
+}

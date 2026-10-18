@@ -1,0 +1,141 @@
+@inject AuthSession Session
+@inject AppearanceService Appearance
+@implements IDisposable
+
+<div class="calfit-app theme-@Appearance.Theme" style="@ThemeStyle">
+    @if (!ready)
+    {
+        <div class="boot-screen"><div class="boot-icon">✦</div><strong>CalFit</strong><span>Preparing your wellness space…</span></div>
+    }
+    else if (!Session.IsSignedIn)
+    {
+        <AuthView />
+    }
+    else
+    {
+        <div class="mobile-shell">
+            <div class="app-top"><div class="brand"><span class="logo-symbol">✦</span><strong>calfit<span class="brand-dot">.</span></strong></div></div>
+            <main class="app-main" @key="selected">
+                @switch (selected)
+                {
+                    case "meals":
+                        <MealsView @key="revision" OpenScanner="GoScanner" />
+                        break;
+                    case "scan":
+                        <ScannerView OnSaved="AfterSaved" OpenDevice="GoDevice" />
+                        break;
+                    case "insights":
+                        <InsightsView @key="revision" />
+                        break;
+                   case "profile":
+                        <ProfileView OpenSettings='() => Navigate("settings")' />
+                        break;
+
+                   case "settings":
+                        <SettingsView />
+                        break;
+
+                   case "device":
+                        <DeviceView OpenScanner="GoScanner" />
+                        break;
+                   default:
+                        <DashboardView @key="revision" OpenScanner="GoScanner" OpenMeals="GoMeals" OpenDevice="GoDevice" />
+                        break;
+                }
+            </main>
+            <nav class="bottom-nav" aria-label="Primary navigation">
+               <button class="@(selected == "home" ? "selected" : "")"
+        @onclick='() => Navigate("home")'
+        aria-label="Home">
+    <span class="nav-icon">
+        <svg viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="1.8"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             aria-hidden="true">
+            <path d="M3 10L12 3l9 7v11H3V10Z" />
+            <path d="M9 21v-7h6v7" />
+        </svg>
+    </span>
+</button>
+               <button class="@(selected == "meals" ? "selected" : "")"
+        @onclick='() => Navigate("meals")'
+        aria-label="Meal History">
+    <span class="nav-icon">
+        <svg viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="1.8"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             aria-hidden="true">
+            <rect x="5" y="3" width="14" height="18" rx="2" />
+            <path d="M8 8h8M8 12h8M8 16h5" />
+        </svg>
+    </span>
+</button>
+                <button class="scan-nav @(selected == "scan" ? "selected" : "")" @onclick='() => Navigate("scan")'><span class="scan-plus">＋</span></button>
+                <button class="@(selected == "insights" ? "selected" : "")"
+        @onclick='() => Navigate("insights")'
+        aria-label="Insights">
+
+    <span class="nav-icon">
+        <svg viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="1.8"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             aria-hidden="true">
+            <path d="M3 3v18h18" />
+            <path d="M7 16v-5" />
+            <path d="M12 16V7" />
+            <path d="M17 16V8" />
+        </svg>
+    </span>
+</button>
+               <button class="@(selected == "profile" || selected == "device" ? "selected" : "")"
+        @onclick='() => Navigate("profile")'
+        aria-label="Profile">
+
+    <span class="nav-icon">
+        <svg viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="1.8"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             aria-hidden="true">
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21c0-4.5 3.5-7 8-7s8 2.5 8 7" />
+        </svg>
+    </span>
+</button>
+            </nav>
+        </div>
+    }
+</div>
+
+@code {
+    private string ThemeStyle => $"--font-scale:{Appearance.FontScale.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+        (string.IsNullOrWhiteSpace(Appearance.CustomAccent) ? "" : $"--accent:{Appearance.CustomAccent};--accent-text:{Appearance.AccentText};--accent-soft:color-mix(in srgb, {Appearance.CustomAccent} 14%, transparent);");
+    private bool ready;
+    private string selected = "home";
+    private int revision;
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnStateChanged;
+        Appearance.Changed += OnStateChanged;
+        await Session.RestoreAsync();
+        ready = true;
+    }
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+    private void Navigate(string name) { selected = name; }
+    private Task GoScanner() { Navigate("scan"); return Task.CompletedTask; }
+    private Task GoMeals() { Navigate("meals"); return Task.CompletedTask; }
+    private Task GoDevice() { Navigate("device"); return Task.CompletedTask; }
+    private Task AfterSaved() { revision++; Navigate("home"); return Task.CompletedTask; }
+    public void Dispose() { Session.Changed -= OnStateChanged; Appearance.Changed -= OnStateChanged; }
+}
