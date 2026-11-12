@@ -145,9 +145,15 @@ public sealed class CalFitApi
     public async Task UpdateProfileAsync(string token, UserProfile profile)
     {
         using var req = Request(HttpMethod.Put, "api/profile", token);
-        req.Content = JsonContent.Create(new {
-            profile.Name, profile.CalorieGoal, profile.ProteinGoal, profile.CarbsGoal,
-            profile.FatGoal, profile.HeightCm, profile.WeightKg
+        req.Content = JsonContent.Create(new
+        {
+            profile.Name,
+            profile.CalorieGoal,
+            profile.ProteinGoal,
+            profile.CarbsGoal,
+            profile.FatGoal,
+            profile.HeightCm,
+            profile.WeightKg
         });
         using var response = await SendAsync(req);
     }
@@ -161,9 +167,15 @@ public sealed class CalFitApi
     public Task<Meal> SaveMealAsync(string token, Meal meal)
     {
         var req = Request(HttpMethod.Post, "api/meals", token);
-        req.Content = JsonContent.Create(new {
-            meal.FoodName, meal.MealType, meal.WeightGrams, meal.Calories,
-            meal.ProteinGrams, meal.CarbsGrams, meal.FatGrams
+        req.Content = JsonContent.Create(new
+        {
+            meal.FoodName,
+            meal.MealType,
+            meal.WeightGrams,
+            meal.Calories,
+            meal.ProteinGrams,
+            meal.CarbsGrams,
+            meal.FatGrams
         });
         return ReadAsync<Meal>(req);
     }
@@ -196,4 +208,60 @@ public sealed class CalFitApi
         req.Content = form;
         return await ReadAsync<FoodAnalysisResult>(req);
     }
+
+
+    public async Task SendHeartbeatAsync(
+        string token,
+        CancellationToken cancellationToken = default)
+    {
+        using var req = Request(
+            HttpMethod.Post,
+            "api/session/heartbeat",
+            token);
+
+        // Short timeout for server availability checks.
+        using var timeout = CancellationTokenSource
+            .CreateLinkedTokenSource(cancellationToken);
+
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            using var response = await _http.SendAsync(
+                req,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+                throw new ApiException(
+                    "Session expired.",
+                    HttpStatusCode.Unauthorized);
+
+            if (!response.IsSuccessStatusCode)
+                throw new ApiException(
+                    $"Heartbeat failed: HTTP {(int)response.StatusCode}",
+                    response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new ApiException(
+                $"Cannot connect to the server: {ex.Message}");
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ApiException("Heartbeat request timed out.");
+        }
+    }
+
+    public async Task SendLogoutAsync(string token)
+    {
+        using var req = Request(
+            HttpMethod.Post,
+            "api/session/logout",
+            token);
+
+        using var response = await SendAsync(req);
+    }
+
 }

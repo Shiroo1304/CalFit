@@ -1,111 +1,1097 @@
 @using System.Globalization
-@using Microsoft.Maui.Media
+@using System.Net
+@using System.Net.Http
+@using System.Net.Sockets
 @using Microsoft.Maui.Storage
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+
+@inject IJSRuntime JS
 @inject CalFitApi Api
 @inject AuthSession Session
 @inject MealNotesService Notes
-<div class="screen">
-    <header class="page-heading"><div><span class="eyebrow">SMART NUTRITION</span><h1>Food scanner<span class="accent">.</span></h1><p>Snap, analyze, review and log.</p></div><div class="heading-icon">◎</div></header>
-    <div class="scanner-feature"><div class="scanner-grid-overlay"></div>
-        @if (!string.IsNullOrWhiteSpace(previewData)) { <img class="food-preview" src="@previewData" alt="Selected food"/> }
-        else { <div class="scanner-illustration"><div class="lens">◉</div><strong>Your next meal starts here</strong><p>Take a photo or choose one from your gallery.</p></div> }
-        <span class="scanner-corner top-left"></span><span class="scanner-corner top-right"></span><span class="scanner-corner bottom-left"></span><span class="scanner-corner bottom-right"></span>
+
+<div class="screen" @ref="scannerElement">
+    <header class="page-heading">
+        <div>
+            <span class="eyebrow">SMART NUTRITION</span>
+            <h1>Food scanner<span class="accent">.</span></h1>
+            <p>Preview, capture, analyze and log.</p>
+        </div>
+    </header>
+
+    <div class="surface form-surface" style="margin-bottom:16px">
+        <h2 style="margin-top:0">ESP32-CAM</h2>
+
+        <div class="scanner-feature"
+             aria-label="ESP32 camera live preview">
+
+            @if (livePreview)
+            {
+                <img @key="activeStreamUrl"
+                     class="food-preview"
+                     src="@activeStreamUrl"
+                     alt="ESP32-CAM live stream"
+                     @onerror="PreviewFailed" />
+
+                <span style="position:absolute;top:12px;left:12px;
+                    z-index:3;padding:7px 10px;
+                    border-radius:8px;background:#07130f;
+                    color:#9af7c5;font-size:11px">
+                    LIVE · ESP32-CAM
+                </span>
+            }
+            else
+            {
+                <div class="scanner-illustration">
+                    <div class="lens">◉</div>
+                    <strong>ESP32-CAM live preview</strong>
+                    <p>
+                        Open camera settings below to configure
+                        and start your camera.
+                    </p>
+                </div>
+            }
+
+            <span class="scanner-corner top-left"></span>
+            <span class="scanner-corner top-right"></span>
+            <span class="scanner-corner bottom-left"></span>
+            <span class="scanner-corner bottom-right"></span>
+        </div>
+
+        <div class="button-row photo-actions">
+            <button type="button"
+                    class="btn btn-primary full"
+                    @onclick="CaptureEsp32Async"
+                    disabled="@busy">
+                @(capturingEsp32
+                    ? "Capturing image…"
+                    : "◎ Capture image")
+            </button>
+        </div>
+
+        <div class="button-row esp32-motors">
+            <button type="button"
+                    class="btn btn-outline"
+                    data-motor="forward"
+                    disabled="@(!motorReady || busy || showMealPopup)">
+                ↑ Up
+            </button>
+
+            <button type="button"
+                    class="btn btn-outline"
+                    data-motor="backward"
+                    disabled="@(!motorReady || busy || showMealPopup)">
+                ↓ Down
+            </button>
+        </div>
+
+        <p class="small muted" role="status">
+            @motorStatus
+        </p>
+
+        <details style="margin-top:16px;
+            border-top:1px solid var(--surface-border);
+            padding-top:16px">
+
+            <summary style="cursor:pointer;color:var(--accent);
+                font-weight:700">
+                Camera settings
+            </summary>
+
+            <label class="field-label" for="camera-ip">
+                ESP32-CAM IP address
+            </label>
+
+            <input id="camera-ip"
+                   class="field"
+                   placeholder="192.168.4.1"
+                   @bind="cameraIp"
+                   disabled="@busy" />
+
+            <label class="field-label" for="camera-stream">
+                Live stream URL
+            </label>
+
+            <input id="camera-stream"
+                   class="field"
+                   placeholder="http://192.168.4.1:81/stream"
+                   @bind="streamUrl"
+                   disabled="@(busy || livePreview)" />
+
+            <p class="small muted">
+                Connect your phone to the ESP32 Wi-Fi network.
+                The default camera address is 192.168.4.1.
+            </p>
+
+            <div class="button-row photo-actions">
+                <button type="button"
+                        class="btn btn-outline"
+                        @onclick="StartPreview"
+                        disabled="@(busy || livePreview)">
+                    Start live preview
+                </button>
+
+                <button type="button"
+                        class="btn btn-outline"
+                        @onclick="StopPreview"
+                        disabled="@(!livePreview)">
+                    Stop preview
+                </button>
+            </div>
+        </details>
     </div>
-    <div class="button-row photo-actions"><button class="btn btn-primary" @onclick="TakePhotoAsync" disabled="@busy">◎ Take photo</button><button class="btn btn-outline" @onclick="ChoosePhotoAsync" disabled="@busy">▧ Gallery</button></div>
-    <div class="scanner-tip"><span>✧</span> CalFit AI estimates nutrition from images. You can correct everything before saving.</div>
-    <div class="section-head"><div><span class="eyebrow">MEAL DETAILS</span><h2>Review your plate</h2></div><button class="text-link" @onclick="Clear">Reset ↻</button></div>
-    <div class="surface form-surface"><label class="field-label">Food name</label><input class="field" placeholder="e.g. Chicken adobo with rice" @bind="foodName" />
-        <div class="two-col"><div><label class="field-label">Meal type</label><select class="field" @bind="mealType"><option>Breakfast</option><option>Lunch</option><option>Dinner</option><option>Snack</option></select></div><div><label class="field-label">Food weight (g) · optional</label><input class="field" type="number" min="0" step="0.1" placeholder="Leave blank if unknown" @bind="weight" /></div></div>
-        <button class="btn btn-ai full" @onclick="AnalyzeAsync" disabled="@(busy || string.IsNullOrWhiteSpace(photoPath))">@(analyzing ? "Analyzing your food…" : "✦ Analyze with CalFit AI")</button>
-        <div class="two-col"><div><label class="field-label">Calories (kcal)</label><input class="field" type="number" min="1" step="1" @bind="calories" /></div><div><label class="field-label">Protein (g)</label><input class="field" type="number" min="0" step="0.1" @bind="protein" /></div><div><label class="field-label">Carbs (g)</label><input class="field" type="number" min="0" step="0.1" @bind="carbs" /></div><div><label class="field-label">Fat (g)</label><input class="field" type="number" min="0" step="0.1" @bind="fat" /></div></div>
-        <label class="field-label">Ingredients (optional)</label><textarea class="field textarea" rows="2" @bind="ingredients" placeholder="List ingredients and quantities. AI notes may be incomplete."></textarea>
-        <label class="field-label">Notes (optional)</label><textarea class="field textarea" rows="2" @bind="notes" placeholder="Your own meal notes"></textarea>
-        @if (!string.IsNullOrWhiteSpace(message)) { <div class="notice @(hasError ? "error" : "success")" role="status">@message</div> }
-        <button class="btn btn-primary full save-meal" @onclick="SaveAsync" disabled="@busy">@(saving ? "Saving meal…" : "Save to my food journal →")</button>
+
+    <div class="scanner-tip">
+        <span>✧</span>
+        Capture your meal, review its details, then save it to your journal.
     </div>
-    <button class="device-banner" @onclick="() => OpenDevice.InvokeAsync()"><span>▣</span><span><strong>CalFit hardware scale</strong><small>Manual weight works now; hardware pairing requires device firmware/API.</small></span><span>›</span></button>
+
+    @if (!showMealPopup && !string.IsNullOrWhiteSpace(message))
+    {
+        <div class="notice @(hasError ? "error" : "success")"
+             role="status">
+            @message
+        </div>
+    }
+
+    <div class="button-row photo-actions">
+        <button type="button"
+                class="btn btn-outline full"
+                @onclick="OpenMealPopup"
+                disabled="@busy">
+            @(string.IsNullOrWhiteSpace(photoPath)
+                ? "＋ Enter meal manually"
+                : "Review captured meal")
+        </button>
+    </div>
+
+    @if (showMealPopup)
+    {
+        <div class="meal-popup-overlay" @onclick="CloseMealPopup">
+            <section class="meal-popup"
+                     role="dialog"
+                     aria-modal="true"
+                     aria-labelledby="meal-popup-title"
+                     tabindex="0"
+                     @onkeydown="PopupKeyDown"
+                     @onclick:stopPropagation="true">
+
+                <header class="meal-popup-header"
+                        @ontouchstart="PopupTouchStart"
+                        @ontouchend="PopupTouchEnd"
+                        @ontouchcancel="CancelPopupSwipe">
+
+                    <div class="meal-popup-handle"></div>
+
+                    <div class="modal-top">
+                        <div>
+                            <span class="eyebrow">REVIEW YOUR PLATE</span>
+                            <h2 id="meal-popup-title">Meal details</h2>
+                        </div>
+
+                        <button type="button"
+                                class="icon-button"
+                                aria-label="Close meal details"
+                                @onclick="CloseMealPopup">
+                            ✕
+                        </button>
+                    </div>
+
+                    <p class="small muted">
+                        Swipe this header left or right to close.
+                        Your draft will be kept.
+                    </p>
+                </header>
+
+                <div class="meal-popup-content">
+                    @if (!string.IsNullOrWhiteSpace(previewData))
+                    {
+                        <img class="meal-popup-photo"
+                             src="@previewData"
+                             alt="Captured meal" />
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        <div class="notice @(hasError ? "error" : "success")"
+                             role="status">
+                            @message
+                        </div>
+                    }
+
+                    <div class="section-head">
+                        <h3>Review your plate</h3>
+
+                        <button type="button"
+                                class="text-link"
+                                @onclick="Clear"
+                                disabled="@busy">
+                            Reset ↻
+                        </button>
+                    </div>
+
+                    <label class="field-label" for="food-name">
+                        Food name
+                    </label>
+
+                    <input id="food-name"
+                           class="field"
+                           placeholder="e.g. Chicken adobo with rice"
+                           @bind="foodName"
+                           disabled="@busy" />
+
+                    <div class="two-col">
+                        <div>
+                            <label class="field-label" for="meal-type">
+                                Meal type
+                            </label>
+
+                            <select id="meal-type"
+                                    class="field"
+                                    @bind="mealType"
+                                    disabled="@busy">
+                                <option>Breakfast</option>
+                                <option>Lunch</option>
+                                <option>Dinner</option>
+                                <option>Snack</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="field-label" for="food-weight">
+                                Weight (g) · verify AI estimate
+                            </label>
+
+                            <input id="food-weight"
+                                   class="field"
+                                   type="number"
+                                   min="0"
+                                   step="0.1"
+                                   placeholder="Enter weight in grams"
+                                   @bind="weight"
+                                   disabled="@busy" />
+                        </div>
+                    </div>
+
+                    <button type="button"
+                            class="btn btn-ai full"
+                            style="margin-top:16px"
+                            @onclick="AnalyzeAsync"
+                            disabled="@(busy || string.IsNullOrWhiteSpace(photoPath))">
+                        @(analyzing
+                            ? "Analyzing your food…"
+                            : "✦ Analyze with CalFit AI")
+                    </button>
+
+                    <div class="two-col">
+                        <div>
+                            <label class="field-label" for="food-calories">
+                                Calories (kcal)
+                            </label>
+
+                            <input id="food-calories"
+                                   class="field"
+                                   type="number"
+                                   min="1"
+                                   step="1"
+                                   @bind="calories"
+                                   disabled="@busy" />
+                        </div>
+
+                        <div>
+                            <label class="field-label" for="food-protein">
+                                Protein (g)
+                            </label>
+
+                            <input id="food-protein"
+                                   class="field"
+                                   type="number"
+                                   min="0"
+                                   step="0.1"
+                                   @bind="protein"
+                                   disabled="@busy" />
+                        </div>
+
+                        <div>
+                            <label class="field-label" for="food-carbs">
+                                Carbs (g)
+                            </label>
+
+                            <input id="food-carbs"
+                                   class="field"
+                                   type="number"
+                                   min="0"
+                                   step="0.1"
+                                   @bind="carbs"
+                                   disabled="@busy" />
+                        </div>
+
+                        <div>
+                            <label class="field-label" for="food-fat">
+                                Fat (g)
+                            </label>
+
+                            <input id="food-fat"
+                                   class="field"
+                                   type="number"
+                                   min="0"
+                                   step="0.1"
+                                   @bind="fat"
+                                   disabled="@busy" />
+                        </div>
+                    </div>
+
+                    <label class="field-label" for="food-ingredients">
+                        Ingredients (optional)
+                    </label>
+
+                    <textarea id="food-ingredients"
+                              class="field textarea"
+                              rows="2"
+                              placeholder="List ingredients and quantities."
+                              @bind="ingredients"
+                              disabled="@busy"></textarea>
+
+                    <label class="field-label" for="food-notes">
+                        Notes (optional)
+                    </label>
+
+                    <textarea id="food-notes"
+                              class="field textarea"
+                              rows="2"
+                              placeholder="Your own meal notes"
+                              @bind="notes"
+                              disabled="@busy"></textarea>
+                </div>
+
+                <footer class="meal-popup-footer">
+                    <button type="button"
+                            class="btn btn-primary full"
+                            @onclick="SaveAsync"
+                            disabled="@busy">
+                        @(saving
+                            ? "Saving meal…"
+                            : "Save to my food journal →")
+                    </button>
+                </footer>
+            </section>
+        </div>
+    }
+
     <div class="bottom-whitespace"></div>
 </div>
+
 @code {
-    [Parameter] public EventCallback OnSaved { get; set; }
-    [Parameter] public EventCallback OpenDevice { get; set; }
-    private string foodName = "", mealType = "Lunch", weight = "", calories = "", protein = "", carbs = "", fat = "", ingredients = "", notes = "", message = "";
-    private string? photoPath, previewData;
-    private bool busy, analyzing, saving, hasError;
-    private int fileRevision;
-    private async Task TakePhotoAsync()
+    [Parameter]
+    public EventCallback OnSaved { get; set; }
+
+    [Parameter]
+    public EventCallback OpenDevice { get; set; }
+
+    private ElementReference scannerElement;
+
+    private IJSObjectReference? motorModule;
+    private IJSObjectReference? motorBinding;
+    private DotNetObjectReference<ScannerView>? motorReference;
+
+    private readonly HttpClient cameraClient = new()
     {
-        if (busy) return;
+        Timeout = TimeSpan.FromSeconds(20)
+    };
+
+    private readonly HttpClient motorClient = new()
+    {
+        Timeout = TimeSpan.FromMilliseconds(400)
+    };
+
+    private readonly SemaphoreSlim motorGate = new(1, 1);
+    private readonly CancellationTokenSource lifetime = new();
+
+    private string cameraIp = "192.168.4.1";
+    private string streamUrl = "http://192.168.4.1:81/stream";
+    private string? activeStreamUrl;
+    private string? motorHost;
+
+    private string motorStatus =
+        "Hold Up or Down to move. Release to stop.";
+
+    private string foodName = "";
+    private string mealType = "Lunch";
+    private string weight = "";
+    private string calories = "";
+    private string protein = "";
+    private string carbs = "";
+    private string fat = "";
+    private string ingredients = "";
+    private string notes = "";
+    private string message = "";
+
+    private string? photoPath;
+    private string? previewData;
+
+    private bool livePreview;
+    private bool motorReady;
+    private bool busy;
+    private bool analyzing;
+    private bool saving;
+    private bool hasError;
+    private bool capturingEsp32;
+    private bool disposed;
+
+    private bool showMealPopup;
+    private bool popupSwipeStarted;
+    private double popupTouchX;
+    private double popupTouchY;
+
+    private int fileRevision;
+    private long latestMotorCommand;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || disposed)
+            return;
+
         try
         {
-            if (!MediaPicker.Default.IsCaptureSupported) { Show("Camera capture is not available on this device.", true); return; }
-            var result = await MediaPicker.Default.CapturePhotoAsync();
-            if (result != null) await UsePhotoAsync(result);
+            motorModule = await JS.InvokeAsync<IJSObjectReference>(
+                "import",
+                "./js/esp32-controls.js"
+            );
+
+            if (disposed)
+            {
+                await motorModule.DisposeAsync();
+                return;
+            }
+
+            motorReference = DotNetObjectReference.Create(this);
+
+            motorBinding = await motorModule.InvokeAsync<IJSObjectReference>(
+                "bind",
+                scannerElement,
+                motorReference
+            );
+
+            motorReady = !disposed;
+
+            if (!disposed)
+                await InvokeAsync(StateHasChanged);
         }
-        catch (Exception ex) { Show("Unable to capture the photo: " + ex.Message, true); }
+        catch (JSException)
+        {
+            motorStatus =
+                "Motor controls could not load. Check wwwroot/js/esp32-controls.js.";
+
+            if (!disposed)
+                await InvokeAsync(StateHasChanged);
+        }
     }
-    private async Task ChoosePhotoAsync()
+
+    [JSInvokable]
+    public async Task MotorCommand(string direction, long sequence)
     {
-        if (busy) return;
-        try { var result = await MediaPicker.Default.PickPhotoAsync(); if (result != null) await UsePhotoAsync(result); }
-        catch (Exception ex) { Show("Unable to open the gallery: " + ex.Message, true); }
+        if (disposed || sequence <= latestMotorCommand)
+            return;
+
+        latestMotorCommand = sequence;
+
+        await motorGate.WaitAsync();
+
+        try
+        {
+            if (disposed || sequence != latestMotorCommand)
+                return;
+
+            if (direction is not ("forward" or "backward" or "stop"))
+                return;
+
+            if (direction != "stop")
+            {
+                if (busy || showMealPopup)
+                    return;
+
+                if (!TryGetCameraAddress(out var address))
+                {
+                    throw new InvalidOperationException(
+                        "Enter the ESP32's private IPv4 address."
+                    );
+                }
+
+                // Release must stop the same device that was started.
+                motorHost ??= address.ToString();
+            }
+
+            if (motorHost == null)
+                return;
+
+            await SendMotorRequestAsync(motorHost, direction);
+
+            if (direction == "stop")
+                motorHost = null;
+        }
+        catch (Exception)
+        {
+            if (!disposed)
+            {
+                motorStatus =
+                    "Motor connection failed. Check Wi-Fi and the device IP.";
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            // JavaScript stops renewing movement after a failed request.
+            throw;
+        }
+        finally
+        {
+            motorGate.Release();
+        }
     }
-    private async Task UsePhotoAsync(FileResult file)
+
+    private async Task SendMotorRequestAsync(
+        string host,
+        string direction)
     {
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp")) { Show("Please choose a JPG, PNG or WebP image.", true); return; }
-        string path = Path.Combine(FileSystem.CacheDirectory, $"calfit_{Guid.NewGuid():N}{ext}");
-        await using (var source = await file.OpenReadAsync())
-        await using (var target = File.Create(path)) await source.CopyToAsync(target);
-        if (new FileInfo(path).Length > 10 * 1024 * 1024) { File.Delete(path); Show("Photo exceeds the 10 MB API limit.", true); return; }
-        if (photoPath != null && File.Exists(photoPath)) File.Delete(photoPath);
-        photoPath = path; fileRevision++;
-        var bytes = await File.ReadAllBytesAsync(path);
-        string mime = ext switch { ".png" => "image/png", ".webp" => "image/webp", _ => "image/jpeg" };
-        previewData = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
-        Show("Photo ready. Enter weight for better AI estimates, then tap Analyze.", false);
+        using var response = await motorClient.GetAsync(
+            $"http://{host}/control?direction={direction}"
+        );
+
+        response.EnsureSuccessStatusCode();
     }
-    private static double Parse(string input) => double.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out double n) ? n : double.TryParse(input, NumberStyles.Float, CultureInfo.CurrentCulture, out n) ? n : double.NaN;
+
+    private async Task StopMotorAsync()
+    {
+        if (motorBinding == null)
+            return;
+
+        try
+        {
+            await motorBinding.InvokeVoidAsync("stop");
+        }
+        catch (JSException)
+        {
+            // Firmware timeout is the fallback if the WebView is unavailable.
+        }
+    }
+
+    private void StartPreview()
+    {
+        if (busy || disposed)
+            return;
+
+        if (!Uri.TryCreate(
+                streamUrl.Trim(),
+                UriKind.Absolute,
+                out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp
+                && uri.Scheme != Uri.UriSchemeHttps)
+            || !IPAddress.TryParse(uri.Host, out var address)
+            || address.AddressFamily != AddressFamily.InterNetwork
+            || !IsPrivateIpv4(address))
+        {
+            Show("Enter a valid private IPv4 camera stream URL.", true);
+            return;
+        }
+
+        activeStreamUrl = uri.AbsoluteUri;
+        livePreview = true;
+        message = "";
+    }
+
+    private void StopPreview()
+    {
+        livePreview = false;
+        activeStreamUrl = null;
+    }
+
+    private async Task PreviewFailed()
+    {
+        if (disposed || !livePreview)
+            return;
+
+        StopPreview();
+        await StopMotorAsync();
+
+        Show(
+            "Live preview could not load. Check the camera URL and Wi-Fi.",
+            true
+        );
+    }
+
+    private async Task OpenMealPopup()
+    {
+        if (disposed)
+            return;
+
+        await StopMotorAsync();
+
+        if (!disposed)
+            showMealPopup = true;
+    }
+
+    private void CloseMealPopup()
+    {
+        showMealPopup = false;
+        popupSwipeStarted = false;
+
+        // Preserve the captured image and meal draft.
+    }
+
+    private void PopupKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            CloseMealPopup();
+    }
+
+    private void PopupTouchStart(TouchEventArgs e)
+    {
+        popupSwipeStarted = e.Touches.Length == 1;
+
+        if (!popupSwipeStarted)
+            return;
+
+        popupTouchX = e.Touches[0].ClientX;
+        popupTouchY = e.Touches[0].ClientY;
+    }
+
+    private void PopupTouchEnd(TouchEventArgs e)
+    {
+        if (!popupSwipeStarted || e.ChangedTouches.Length == 0)
+            return;
+
+        popupSwipeStarted = false;
+
+        double distanceX =
+            e.ChangedTouches[0].ClientX - popupTouchX;
+
+        double distanceY =
+            e.ChangedTouches[0].ClientY - popupTouchY;
+
+        if (Math.Abs(distanceX) >= 80
+            && Math.Abs(distanceX) > Math.Abs(distanceY) * 1.5)
+        {
+            CloseMealPopup();
+        }
+    }
+
+    private void CancelPopupSwipe(TouchEventArgs e)
+    {
+        popupSwipeStarted = false;
+    }
+
+    private bool TryGetCameraAddress(out IPAddress address)
+    {
+        address = IPAddress.None;
+
+        if (!IPAddress.TryParse(cameraIp.Trim(), out var parsed)
+            || parsed.AddressFamily != AddressFamily.InterNetwork
+            || !IsPrivateIpv4(parsed))
+        {
+            return false;
+        }
+
+        address = parsed;
+        return true;
+    }
+
+    private async Task CaptureEsp32Async()
+    {
+        if (busy || disposed)
+            return;
+
+        if (!TryGetCameraAddress(out var address))
+        {
+            Show("Enter a valid private IPv4 camera address.", true);
+            return;
+        }
+
+        busy = true;
+        capturingEsp32 = true;
+        message = "";
+
+        string? pendingPath = null;
+
+        try
+        {
+            await StopMotorAsync();
+
+            // Pause MJPEG while requesting the still image.
+            StopPreview();
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(200, lifetime.Token);
+
+            using var response = await cameraClient.GetAsync(
+                $"http://{address}/capture?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+                lifetime.Token
+            );
+
+            response.EnsureSuccessStatusCode();
+
+            byte[] image = await response.Content.ReadAsByteArrayAsync(
+                lifetime.Token
+            );
+
+            if (image.Length == 0 || image.Length > 10 * 1024 * 1024)
+            {
+                Show("Camera image is empty or exceeds 10 MB.", true);
+                return;
+            }
+
+            if (image.Length < 4
+                || image[0] != 0xFF
+                || image[1] != 0xD8
+                || image[^2] != 0xFF
+                || image[^1] != 0xD9)
+            {
+                Show("Camera did not return a complete JPEG image.", true);
+                return;
+            }
+
+            pendingPath = Path.Combine(
+                FileSystem.CacheDirectory,
+                $"calfit_esp32_{Guid.NewGuid():N}.jpg"
+            );
+
+            await File.WriteAllBytesAsync(
+                pendingPath,
+                image,
+                lifetime.Token
+            );
+
+            if (disposed)
+                return;
+
+            // A new photo starts a new meal draft.
+            Clear();
+
+            photoPath = pendingPath;
+            pendingPath = null;
+
+            previewData =
+                "data:image/jpeg;base64,"
+                + Convert.ToBase64String(image);
+
+            fileRevision++;
+            showMealPopup = true;
+
+            Show(
+                "Image captured. Enter weight or analyze to estimate it.",
+                false
+            );
+        }
+        catch (OperationCanceledException) when (disposed)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+            Show("Camera capture timed out. Check the Wi-Fi connection.", true);
+        }
+        catch (Exception ex)
+        {
+            Show("ESP32-CAM capture failed: " + ex.Message, true);
+        }
+        finally
+        {
+            DeleteCachedPhoto(pendingPath);
+            capturingEsp32 = false;
+            busy = false;
+
+            if (disposed)
+                DeleteCachedPhoto(photoPath);
+        }
+    }
+
+    private static bool IsPrivateIpv4(IPAddress address)
+    {
+        byte[] bytes = address.GetAddressBytes();
+
+        return bytes[0] == 10
+            || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            || (bytes[0] == 192 && bytes[1] == 168);
+    }
+
+    private static double Parse(string input)
+    {
+        if (double.TryParse(
+                input,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double value))
+        {
+            return value;
+        }
+
+        return double.TryParse(
+                input,
+                NumberStyles.Float,
+                CultureInfo.CurrentCulture,
+                out value)
+            ? value
+            : double.NaN;
+    }
+
     private async Task AnalyzeAsync()
     {
-        if (busy || photoPath == null) return;
-        busy = true; analyzing = true; message = ""; var version = fileRevision;
+        if (busy || disposed || photoPath == null)
+            return;
+
+        busy = true;
+        analyzing = true;
+        message = "";
+
+        int version = fileRevision;
+
         try
         {
-            double w = Parse(weight);
-            var result = await Api.AnalyzeAsync(Session.Token!, photoPath, w > 0 && double.IsFinite(w) ? w : null);
-            if (version != fileRevision) return;
-            if (!result.IsFood) { Show("The image does not appear to contain food.", true); return; }
-            foodName = result.FoodName; calories = result.Calories.ToString(CultureInfo.InvariantCulture); protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture); carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture); fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
-            // An image is not a scale: do not silently replace food weight with an AI estimate.
-            if (!string.IsNullOrWhiteSpace(result.Notes)) notes = result.Notes;
-            Show("AI estimate ready. Please verify the food, weight and nutrition before saving.", false);
+            double grams = Parse(weight);
+
+            var result = await Api.AnalyzeAsync(
+                Session.Token!,
+                photoPath,
+                grams > 0 && double.IsFinite(grams) ? grams : null
+            );
+
+            if (disposed || version != fileRevision)
+                return;
+
+            if (!result.IsFood)
+            {
+                Show("The image does not appear to contain food.", true);
+                return;
+            }
+
+            foodName = result.FoodName;
+
+            if (string.IsNullOrWhiteSpace(weight)
+                && double.IsFinite(result.WeightGrams)
+                && result.WeightGrams > 0)
+            {
+                weight = result.WeightGrams.ToString(
+                    "0.#",
+                    CultureInfo.InvariantCulture
+                );
+            }
+
+            calories = result.Calories.ToString(CultureInfo.InvariantCulture);
+            protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture);
+            carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture);
+            fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
+
+            if (!string.IsNullOrWhiteSpace(result.Notes))
+                notes = result.Notes;
+
+            Show(
+                "AI estimate ready. Verify weight and nutrition before saving.",
+                false
+            );
         }
-        catch (Exception ex) { Show(ex.Message, true); }
-        finally { busy = false; analyzing = false; }
+        catch (Exception ex)
+        {
+            Show(ex.Message, true);
+        }
+        finally
+        {
+            busy = false;
+            analyzing = false;
+
+            if (disposed)
+                DeleteCachedPhoto(photoPath);
+        }
     }
+
     private async Task SaveAsync()
     {
-        if (busy) return;
-        double w = string.IsNullOrWhiteSpace(weight) ? 0 : Parse(weight), p = string.IsNullOrWhiteSpace(protein) ? 0 : Parse(protein), c = string.IsNullOrWhiteSpace(carbs) ? 0 : Parse(carbs), f = string.IsNullOrWhiteSpace(fat) ? 0 : Parse(fat);
-        if (string.IsNullOrWhiteSpace(foodName) || !int.TryParse(calories, out int kcal) || kcal <= 0 || !double.IsFinite(w) || w < 0 || !double.IsFinite(p) || p < 0 || !double.IsFinite(c) || c < 0 || !double.IsFinite(f) || f < 0)
-        { Show("Enter a food name and positive calories. Weight and macros can be blank; if entered, they must be non-negative numbers.", true); return; }
-        busy = true; saving = true; message = "";
+        if (busy || disposed)
+            return;
+
+        double grams = string.IsNullOrWhiteSpace(weight) ? 0 : Parse(weight);
+        double p = string.IsNullOrWhiteSpace(protein) ? 0 : Parse(protein);
+        double c = string.IsNullOrWhiteSpace(carbs) ? 0 : Parse(carbs);
+        double f = string.IsNullOrWhiteSpace(fat) ? 0 : Parse(fat);
+
+        if (string.IsNullOrWhiteSpace(foodName)
+            || !int.TryParse(calories, out int kcal)
+            || kcal <= 0
+            || !double.IsFinite(grams) || grams < 0
+            || !double.IsFinite(p) || p < 0
+            || !double.IsFinite(c) || c < 0
+            || !double.IsFinite(f) || f < 0)
+        {
+            Show(
+                "Enter a food name, positive calories, and valid non-negative weight and macros.",
+                true
+            );
+            return;
+        }
+
+        busy = true;
+        saving = true;
+        message = "";
+
         try
         {
-            var saved = await Api.SaveMealAsync(Session.Token!, new Meal { FoodName = foodName.Trim(), MealType = mealType, WeightGrams = w, Calories = kcal, ProteinGrams = p, CarbsGrams = c, FatGrams = f });
-            if (!string.IsNullOrWhiteSpace(ingredients) || !string.IsNullOrWhiteSpace(notes)) Notes.Save(saved.UserId, saved.Id, new() { Ingredients = ingredients, Note = notes });
+            var saved = await Api.SaveMealAsync(
+                Session.Token!,
+                new Meal
+                {
+                    FoodName = foodName.Trim(),
+                    MealType = mealType,
+                    WeightGrams = grams,
+                    Calories = kcal,
+                    ProteinGrams = p,
+                    CarbsGrams = c,
+                    FatGrams = f
+                }
+            );
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(ingredients)
+                    || !string.IsNullOrWhiteSpace(notes))
+                {
+                    Notes.Save(
+                        saved.UserId,
+                        saved.Id,
+                        new()
+                        {
+                            Ingredients = ingredients,
+                            Note = notes
+                        }
+                    );
+                }
+            }
+            catch
+            {
+                Clear();
+
+                Show(
+                    "Meal saved, but its local notes could not be stored.",
+                    true
+                );
+
+                return;
+            }
+
             Clear();
-            await OnSaved.InvokeAsync();
+            CloseMealPopup();
+
+            if (!disposed)
+                await OnSaved.InvokeAsync();
         }
-        catch (Exception ex) { Show("Could not save meal: " + ex.Message, true); }
-        finally { busy = false; saving = false; }
+        catch (Exception ex)
+        {
+            Show("Could not save meal: " + ex.Message, true);
+        }
+        finally
+        {
+            busy = false;
+            saving = false;
+
+            if (disposed)
+                DeleteCachedPhoto(photoPath);
+        }
     }
-    private void Show(string text, bool failure) { message = text; hasError = failure; }
+
+    private void Show(string text, bool failure)
+    {
+        if (disposed)
+            return;
+
+        message = text;
+        hasError = failure;
+    }
+
     private void Clear()
     {
-        foodName = ""; weight = ""; calories = ""; protein = ""; carbs = ""; fat = ""; ingredients = ""; notes = ""; mealType = "Lunch"; message = ""; previewData = null; fileRevision++;
-        if (photoPath != null && File.Exists(photoPath)) File.Delete(photoPath);
+        foodName = "";
+        mealType = "Lunch";
+        weight = "";
+        calories = "";
+        protein = "";
+        carbs = "";
+        fat = "";
+        ingredients = "";
+        notes = "";
+        message = "";
+        hasError = false;
+        previewData = null;
+
+        fileRevision++;
+
+        DeleteCachedPhoto(photoPath);
         photoPath = null;
+    }
+
+    private static void DeleteCachedPhoto(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+        motorReady = false;
+        fileRevision++;
+
+        StopPreview();
+        lifetime.Cancel();
+
+        try
+        {
+            if (motorBinding != null)
+                await motorBinding.InvokeVoidAsync("dispose");
+        }
+        catch (JSException)
+        {
+        }
+
+        await motorGate.WaitAsync();
+
+        try
+        {
+            if (motorHost != null)
+                await SendMotorRequestAsync(motorHost, "stop");
+        }
+        catch (HttpRequestException)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            motorGate.Release();
+            motorClient.Dispose();
+        }
+
+        cameraClient.Dispose();
+
+        if (!busy)
+            DeleteCachedPhoto(photoPath);
+
+        lifetime.Dispose();
+        motorReference?.Dispose();
+
+        if (motorBinding != null)
+            await motorBinding.DisposeAsync();
+
+        if (motorModule != null)
+            await motorModule.DisposeAsync();
     }
 }

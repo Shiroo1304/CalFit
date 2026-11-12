@@ -1,11 +1,16 @@
 @inject AuthSession Session
 @inject AppearanceService Appearance
-@implements IDisposable
+@inject CalFitApi Api
+@implements IAsyncDisposable
 
 <div class="calfit-app theme-@Appearance.Theme" style="@ThemeStyle">
     @if (!ready)
     {
-        <div class="boot-screen"><div class="boot-icon">✦</div><strong>CalFit</strong><span>Preparing your wellness space…</span></div>
+        <div class="boot-screen">
+            <div class="boot-icon">✦</div>
+            <strong>CalFit</strong>
+            <span>Preparing your wellness space…</span>
+        </div>
     }
     else if (!Session.IsSignedIn)
     {
@@ -13,129 +18,373 @@
     }
     else
     {
-        <div class="mobile-shell">
-            <div class="app-top"><div class="brand"><span class="logo-symbol">✦</span><strong>calfit<span class="brand-dot">.</span></strong></div></div>
+        <div class="app-top">
+            <div class="brand">
+                <strong>Calfit<span class="brand-dot">.</span></strong>
+            </div>
+        </div>
+
             <main class="app-main" @key="selected">
                 @switch (selected)
                 {
                     case "meals":
                         <MealsView @key="revision" OpenScanner="GoScanner" />
                         break;
+
                     case "scan":
                         <ScannerView OnSaved="AfterSaved" OpenDevice="GoDevice" />
                         break;
+
                     case "insights":
                         <InsightsView @key="revision" />
                         break;
-                   case "profile":
+
+                    case "profile":
                         <ProfileView OpenSettings='() => Navigate("settings")' />
                         break;
 
-                   case "settings":
+                    case "settings":
                         <SettingsView />
                         break;
 
-                   case "device":
+                    case "device":
                         <DeviceView OpenScanner="GoScanner" />
                         break;
-                   default:
-                        <DashboardView @key="revision" OpenScanner="GoScanner" OpenMeals="GoMeals" OpenDevice="GoDevice" />
+
+                    default:
+                        <DashboardView @key="revision"
+                                       OpenScanner="GoScanner"
+                                       OpenMeals="GoMeals"
+                                       OpenDevice="GoDevice" />
                         break;
                 }
             </main>
+
             <nav class="bottom-nav" aria-label="Primary navigation">
-               <button class="@(selected == "home" ? "selected" : "")"
-        @onclick='() => Navigate("home")'
-        aria-label="Home">
-    <span class="nav-icon">
-        <svg viewBox="0 0 24 24"
-             fill="none"
-             stroke="currentColor"
-             stroke-width="1.8"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             aria-hidden="true">
-            <path d="M3 10L12 3l9 7v11H3V10Z" />
-            <path d="M9 21v-7h6v7" />
-        </svg>
-    </span>
-</button>
-               <button class="@(selected == "meals" ? "selected" : "")"
-        @onclick='() => Navigate("meals")'
-        aria-label="Meal History">
-    <span class="nav-icon">
-        <svg viewBox="0 0 24 24"
-             fill="none"
-             stroke="currentColor"
-             stroke-width="1.8"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             aria-hidden="true">
-            <rect x="5" y="3" width="14" height="18" rx="2" />
-            <path d="M8 8h8M8 12h8M8 16h5" />
-        </svg>
-    </span>
-</button>
-                <button class="scan-nav @(selected == "scan" ? "selected" : "")" @onclick='() => Navigate("scan")'><span class="scan-plus">＋</span></button>
+
+                <button class="@(selected == "home" ? "selected" : "")"
+                        @onclick='() => Navigate("home")'
+                        aria-label="Home">
+                    <span class="nav-icon">
+                        <svg viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             stroke-width="1.8"
+                             stroke-linecap="round"
+                             stroke-linejoin="round"
+                             aria-hidden="true">
+                            <path d="M3 10L12 3l9 7v11H3V10Z" />
+                            <path d="M9 21v-7h6v7" />
+                        </svg>
+                    </span>
+                </button>
+
+                <button class="@(selected == "meals" ? "selected" : "")"
+                        @onclick='() => Navigate("meals")'
+                        aria-label="Meal History">
+                    <span class="nav-icon">
+                        <svg viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             stroke-width="1.8"
+                             stroke-linecap="round"
+                             stroke-linejoin="round"
+                             aria-hidden="true">
+                            <rect x="5" y="3" width="14" height="18" rx="2" />
+                            <path d="M8 8h8M8 12h8M8 16h5" />
+                        </svg>
+                    </span>
+                </button>
+
+                <button class="scan-nav @(selected == "scan" ? "selected" : "")"
+                        @onclick='() => Navigate("scan")'>
+                    <span class="scan-plus">＋</span>
+                </button>
+
                 <button class="@(selected == "insights" ? "selected" : "")"
-        @onclick='() => Navigate("insights")'
-        aria-label="Insights">
+                        @onclick='() => Navigate("insights")'
+                        aria-label="Insights">
+                    <span class="nav-icon">
+                        <svg viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             stroke-width="1.8"
+                             stroke-linecap="round"
+                             stroke-linejoin="round"
+                             aria-hidden="true">
+                            <path d="M3 3v18h18" />
+                            <path d="M7 16v-5" />
+                            <path d="M12 16V7" />
+                            <path d="M17 16V8" />
+                        </svg>
+                    </span>
+                </button>
 
-    <span class="nav-icon">
-        <svg viewBox="0 0 24 24"
-             fill="none"
-             stroke="currentColor"
-             stroke-width="1.8"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             aria-hidden="true">
-            <path d="M3 3v18h18" />
-            <path d="M7 16v-5" />
-            <path d="M12 16V7" />
-            <path d="M17 16V8" />
-        </svg>
-    </span>
-</button>
-               <button class="@(selected == "profile" || selected == "device" ? "selected" : "")"
-        @onclick='() => Navigate("profile")'
-        aria-label="Profile">
+                <button class="@(selected == "profile" || selected == "device" ? "selected" : "")"
+                        @onclick='() => Navigate("profile")'
+                        aria-label="Profile">
+                    <span class="nav-icon">
+                        <svg viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             stroke-width="1.8"
+                             stroke-linecap="round"
+                             stroke-linejoin="round"
+                             aria-hidden="true">
+                            <circle cx="12" cy="8" r="4" />
+                            <path d="M4 21c0-4.5 3.5-7 8-7s8 2.5 8 7" />
+                        </svg>
+                    </span>
+                </button>
 
-    <span class="nav-icon">
-        <svg viewBox="0 0 24 24"
-             fill="none"
-             stroke="currentColor"
-             stroke-width="1.8"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             aria-hidden="true">
-            <circle cx="12" cy="8" r="4" />
-            <path d="M4 21c0-4.5 3.5-7 8-7s8 2.5 8 7" />
-        </svg>
-    </span>
-</button>
             </nav>
-        </div>
+
     }
 </div>
 
 @code {
-    private string ThemeStyle => $"--font-scale:{Appearance.FontScale.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
-        (string.IsNullOrWhiteSpace(Appearance.CustomAccent) ? "" : $"--accent:{Appearance.CustomAccent};--accent-text:{Appearance.AccentText};--accent-soft:color-mix(in srgb, {Appearance.CustomAccent} 14%, transparent);");
+    private CancellationTokenSource? heartbeatCancellation;
+    private Task? heartbeatTask;
+    private string? monitoredSessionToken;
+    private bool disposed;
+
     private bool ready;
     private string selected = "home";
     private int revision;
+
+    private string ThemeStyle =>
+        $"--font-scale:{Appearance.FontScale.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+        (string.IsNullOrWhiteSpace(Appearance.CustomAccent)
+            ? ""
+            : $"--accent:{Appearance.CustomAccent};--accent-text:{Appearance.AccentText};--accent-soft:color-mix(in srgb, {Appearance.CustomAccent} 14%, transparent);");
+
     protected override async Task OnInitializedAsync()
     {
         Session.Changed += OnStateChanged;
         Appearance.Changed += OnStateChanged;
+
         await Session.RestoreAsync();
+
         ready = true;
+
+        if (Session.IsSignedIn)
+            StartHeartbeat();
     }
-    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
-    private void Navigate(string name) { selected = name; }
-    private Task GoScanner() { Navigate("scan"); return Task.CompletedTask; }
-    private Task GoMeals() { Navigate("meals"); return Task.CompletedTask; }
-    private Task GoDevice() { Navigate("device"); return Task.CompletedTask; }
-    private Task AfterSaved() { revision++; Navigate("home"); return Task.CompletedTask; }
-    public void Dispose() { Session.Changed -= OnStateChanged; Appearance.Changed -= OnStateChanged; }
+
+    private void OnStateChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (disposed)
+                return;
+
+            if (Session.IsSignedIn)
+                StartHeartbeat();
+            else
+                StopHeartbeat();
+
+            StateHasChanged();
+        });
+    }
+
+    private void StartHeartbeat()
+    {
+        if (disposed || !Session.IsSignedIn)
+            return;
+
+        string token = Session.Token!;
+
+        // Do not create duplicate monitors for the same login.
+        if (monitoredSessionToken == token &&
+            heartbeatTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        // Cancel any previous monitoring session.
+        StopHeartbeat();
+
+        var cancellation = new CancellationTokenSource();
+
+        heartbeatCancellation = cancellation;
+        monitoredSessionToken = token;
+
+        heartbeatTask = MonitorServerAsync(
+            token,
+            cancellation.Token);
+    }
+
+    private void StopHeartbeat()
+    {
+        heartbeatCancellation?.Cancel();
+        heartbeatCancellation = null;
+        monitoredSessionToken = null;
+    }
+
+    private async Task MonitorServerAsync(
+        string monitoredToken,
+        CancellationToken cancellationToken)
+    {
+        int failures = 0;
+
+        try
+        {
+            using var timer = new PeriodicTimer(
+                TimeSpan.FromSeconds(10));
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (!Session.IsSignedIn ||
+                    Session.Token != monitoredToken)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await Api.SendHeartbeatAsync(
+                        monitoredToken,
+                        cancellationToken);
+
+                    failures = 0;
+
+                    System.Diagnostics.Debug.WriteLine(
+                        "CalFit heartbeat successful.");
+                }
+                catch (ApiException ex)
+                    when (ex.StatusCode ==
+                          System.Net.HttpStatusCode.Unauthorized)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "CalFit heartbeat rejected: HTTP 401.");
+
+                    await InvokeAsync(async () =>
+                    {
+                        if (!cancellationToken.IsCancellationRequested &&
+                            Session.IsSignedIn &&
+                            Session.Token == monitoredToken)
+                        {
+                            await Session.SignOutAsync(
+                                "Your session has expired.");
+                        }
+                    });
+
+                    break;
+                }
+                catch (OperationCanceledException)
+                    when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (ApiException ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"CalFit heartbeat error: HTTP {ex.StatusCode}, {ex.Message}");
+
+                    bool unavailable =
+                        ex.StatusCode == null ||
+                        (int)ex.StatusCode >= 500 ||
+                        ex.StatusCode ==
+                            System.Net.HttpStatusCode.TooManyRequests;
+
+                    if (!unavailable)
+                    {
+                        // A client/configuration error is not proof
+                        // that the API server is offline.
+                        break;
+                    }
+
+                    failures++;
+
+                    System.Diagnostics.Debug.WriteLine(
+                        $"CalFit heartbeat failure {failures}/3.");
+
+                    if (failures >= 3)
+                    {
+                        await InvokeAsync(async () =>
+                        {
+                            if (!cancellationToken.IsCancellationRequested &&
+                                Session.IsSignedIn &&
+                                Session.Token == monitoredToken)
+                            {
+                                await Session.SignOutAsync(
+                                    "Server unavailable. Please log in again.");
+                            }
+                        });
+
+                        break;
+                    }
+                }
+
+                if (!await timer.WaitForNextTickAsync(
+                    cancellationToken))
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            // Monitoring was cancelled normally.
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"CalFit heartbeat monitoring stopped: {ex}");
+        }
+    }
+
+    private void Navigate(string name)
+    {
+        selected = name;
+    }
+
+    private Task GoScanner()
+    {
+        Navigate("scan");
+        return Task.CompletedTask;
+    }
+
+    private Task GoMeals()
+    {
+        Navigate("meals");
+        return Task.CompletedTask;
+    }
+
+    private Task GoDevice()
+    {
+        Navigate("device");
+        return Task.CompletedTask;
+    }
+
+    private Task AfterSaved()
+    {
+        revision++;
+        Navigate("home");
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+
+        Session.Changed -= OnStateChanged;
+        Appearance.Changed -= OnStateChanged;
+
+        var runningTask = heartbeatTask;
+
+        StopHeartbeat();
+
+        if (runningTask is not null)
+        {
+            try
+            {
+                await runningTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
 }

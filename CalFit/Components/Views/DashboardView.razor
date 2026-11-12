@@ -18,6 +18,10 @@
 
             <p>Here's how you're fueling today.</p>
         </div>
+
+        @* <img src="images/CalFitLogo.png"
+             alt="CalFit logo"
+             class="calfit-logo-icon" /> *@
     </header>
 
     <!-- DAILY CALORIE INTAKE -->
@@ -140,31 +144,7 @@
     </div>
 
     <!-- QUICK ACTIONS -->
-    <div class="section-head">
-        <h2>Quick actions</h2>
-    </div>
-
-    <div class="action-grid">
-
-        <button class="action-card action-primary"
-                @onclick="() => OpenScanner.InvokeAsync()">
-
-            <span class="action-graphic">◎</span>
-            <strong>AI food scan</strong>
-            <small>Identify and track meals</small>
-            <span class="action-arrow">↗</span>
-        </button>
-
-        <button class="action-card"
-                @onclick="() => OpenDevice.InvokeAsync()">
-
-            <span class="action-graphic">▣</span>
-            <strong>CalFit device</strong>
-            <small>Connection &amp; setup</small>
-            <span class="action-arrow">↗</span>
-        </button>
-
-    </div>
+   
 
     <!-- RECENT MEALS -->
     <div class="section-head">
