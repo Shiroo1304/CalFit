@@ -1,4 +1,3 @@
-
 using CalFit.Services;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 
@@ -17,7 +16,6 @@ public static class MauiProgram
         builder.Services.AddBlazorWebViewDeveloperTools();
 #endif
 
-        // Existing services
         builder.Services.AddSingleton<CalFitApi>();
         builder.Services.AddSingleton<AuthSession>();
         builder.Services.AddSingleton<AppearanceService>();
