@@ -99,7 +99,8 @@ made by the receiver. The optional live weight read does not wake the display.
   a cancel request or invent a robot endpoint.
 - Duplicate completed scans are acknowledged without redisplaying them as new meals.
   AI and meal saving are explicit actions, never callbacks from ACK or status polling.
-- Nullable captured weight stays nullable locally. A known measured weight is read-only
+- Nullable captured weight stays nullable locally. A captured 0 g requires reweighing before analysis/saving; it is not silently replaced
+  by an AI estimate. A known measured weight is read-only
   in the form; if missing, a user may supply a manual value. Existing backend Meal
   requires a non-null double, so absent weight is sent as 0 on journal save, matching
   its existing optional-weight convention. The UI never calls this a measured 0 g.

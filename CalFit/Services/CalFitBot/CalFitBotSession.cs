@@ -13,6 +13,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
     private string? manualAddress;
     private int reconnectTicks;
     private int metadataFailures;
+    private string? canceledNotice;
     private bool disposed;
     public event Action? Changed;
     public Uri? Address { get; private set; }
@@ -43,7 +44,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
         try
         {
             manualAddress = string.IsNullOrWhiteSpace(address) ? null : address.Trim();
-            Address = null; reconnectTicks = 0; LiveWeight = null; attempts.Clear(); metadataFailures = 0;
+            Address = null; reconnectTicks = 0; LiveWeight = null; attempts.Clear(); metadataFailures = 0; canceledNotice = null;
             Set(CalFitBotConnectionState.Disconnected, "Reconnecting…");
         }
         finally { gate.Release(); }
@@ -53,7 +54,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
     public async Task RetryAsync(CancellationToken ct)
     {
         await gate.WaitAsync(ct);
-        try { attempts.Clear(); metadataFailures = 0; }
+        try { attempts.Clear(); metadataFailures = 0; canceledNotice = null; }
         finally { gate.Release(); }
         await TickAsync(ct);
     }
@@ -158,6 +159,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
                     Set(CalFitBotConnectionState.Waiting, "No submitted scan is pending.");
                     return;
                 }
+                canceledNotice = null;
                 if (Receipt is { Consumed: false, Canceled: false } current && current.Scan.ScanId != scan.ScanId)
                 {
                     Set(CalFitBotConnectionState.Received, "Another scan is waiting on the robot. Finish or discard the current meal first.");
@@ -200,12 +202,13 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
             catch (Exception) { LiveWeight = null; } // Standby/sensor unavailable is not a disconnection.
             if (Receipt is { Canceled: true }) Set(CalFitBotConnectionState.Error, "Scan unavailable before acknowledgement. Submit a new scan on the robot.");
             else Set(Receipt == null ? CalFitBotConnectionState.Waiting : CalFitBotConnectionState.Received,
-                Receipt == null ? "Connected. Capture and SUBMIT a meal on CalFitBot." : "Photo and captured weight received. Analyze when ready.");
+                Receipt == null ? canceledNotice ?? "Connected. Capture and SUBMIT a meal on CalFitBot." : "Photo and captured weight received. Analyze when ready.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (CalFitBotScanCanceledException)
         {
-            Set(CalFitBotConnectionState.Waiting, "The scan was canceled or removed on the robot. Waiting for a new submission.");
+            canceledNotice = "The scan was canceled or removed on the robot. Waiting for a new submission.";
+            Set(CalFitBotConnectionState.Waiting, canceledNotice);
         }
         catch (Exception ex)
         {

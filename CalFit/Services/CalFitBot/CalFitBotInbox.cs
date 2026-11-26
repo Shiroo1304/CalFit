@@ -8,7 +8,6 @@ namespace CalFit.Services;
 // A receipt directory is committed only after BOTH metadata and JPEG are durable.
 public sealed class CalFitBotInbox(string root)
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static string Key(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private string DirectoryFor(string owner, string id) => Path.Combine(root, Key(owner), Key(id));
 
@@ -17,7 +16,7 @@ public sealed class CalFitBotInbox(string root)
         string directory = DirectoryFor(owner, id);
         string metadata = Path.Combine(directory, "receipt.json");
         if (!File.Exists(metadata)) return null;
-        var receipt = JsonSerializer.Deserialize<CalFitBotReceipt>(await File.ReadAllTextAsync(metadata, ct), Json)
+        var receipt = JsonSerializer.Deserialize<CalFitBotReceipt>(await File.ReadAllTextAsync(metadata, ct), CalFitBotJsonContext.Default.CalFitBotReceipt)
             ?? throw new InvalidDataException("Invalid local scan receipt.");
         if (receipt.Scan.ScanId != id) throw new InvalidDataException("Local scan identity mismatch.");
         string photo = Path.Combine(directory, "photo.jpg");
@@ -43,7 +42,7 @@ public sealed class CalFitBotInbox(string root)
         {
             await File.WriteAllBytesAsync(Path.Combine(staging, "photo.jpg"), photo, ct);
             var receipt = new CalFitBotReceipt(scan, address.AbsoluteUri, Path.Combine(destination, "photo.jpg"), DateTimeOffset.UtcNow);
-            await File.WriteAllTextAsync(Path.Combine(staging, "receipt.json"), JsonSerializer.Serialize(receipt, Json), ct);
+            await File.WriteAllTextAsync(Path.Combine(staging, "receipt.json"), JsonSerializer.Serialize(receipt, CalFitBotJsonContext.Default.CalFitBotReceipt), ct);
             ct.ThrowIfCancellationRequested();
             Directory.Move(staging, destination);
             return receipt;
@@ -57,7 +56,7 @@ public sealed class CalFitBotInbox(string root)
         string temporary = destination + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(receipt, Json), ct);
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(receipt, CalFitBotJsonContext.Default.CalFitBotReceipt), ct);
             ct.ThrowIfCancellationRequested();
             File.Move(temporary, destination, true);
         }
@@ -72,7 +71,7 @@ public sealed class CalFitBotInbox(string root)
         foreach (var file in Directory.EnumerateFiles(directory, "receipt.json", SearchOption.AllDirectories))
         {
             if (Path.GetFileName(Path.GetDirectoryName(file)!).StartsWith('.')) continue;
-            var receipt = JsonSerializer.Deserialize<CalFitBotReceipt>(await File.ReadAllTextAsync(file, ct), Json);
+            var receipt = JsonSerializer.Deserialize<CalFitBotReceipt>(await File.ReadAllTextAsync(file, ct), CalFitBotJsonContext.Default.CalFitBotReceipt);
             if (receipt is { Consumed: false, Canceled: false })
             {
                 var verified = await FindAsync(owner, receipt.Scan.ScanId, ct);

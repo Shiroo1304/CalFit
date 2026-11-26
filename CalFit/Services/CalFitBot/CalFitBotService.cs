@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using CalFit.Models;
 
 namespace CalFit.Services;
@@ -8,7 +9,6 @@ namespace CalFit.Services;
 public sealed class CalFitBotService(HttpClient http, ICalFitBotDiscovery discovery) : ICalFitBotService
 {
     public const int MaximumPhotoBytes = 10 * 1024 * 1024;
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public Task<Uri?> DiscoverAsync(CancellationToken ct) => discovery.DiscoverAsync(ct);
 
@@ -49,7 +49,7 @@ public sealed class CalFitBotService(HttpClient http, ICalFitBotDiscovery discov
         if (response.StatusCode == HttpStatusCode.NoContent) return null;
         if (response.StatusCode == HttpStatusCode.NotFound) throw new CalFitBotScanCanceledException();
         response.EnsureSuccessStatusCode();
-        return JsonSerializer.Deserialize<CalFitBotScan>(await ReadBoundedAsync(response, 16 * 1024, timeout.Token), Json)
+        return JsonSerializer.Deserialize<CalFitBotScan>(await ReadBoundedAsync(response, 16 * 1024, timeout.Token), CalFitBotJsonContext.Default.CalFitBotScan)
             ?? throw new InvalidDataException("Empty scan metadata.");
     }
 
@@ -87,7 +87,7 @@ public sealed class CalFitBotService(HttpClient http, ICalFitBotDiscovery discov
         using var request = Request(HttpMethod.Get, address, route);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
-        return JsonSerializer.Deserialize<T>(await ReadBoundedAsync(response, 16 * 1024, timeout.Token), Json)
+        return JsonSerializer.Deserialize<T>(await ReadBoundedAsync(response, 16 * 1024, timeout.Token), (JsonTypeInfo<T>)CalFitBotJsonContext.Default.GetTypeInfo(typeof(T))!)
             ?? throw new InvalidDataException("Empty robot response.");
     }
 

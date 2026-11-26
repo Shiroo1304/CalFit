@@ -458,10 +458,14 @@
         ? number : double.TryParse(value, out number) ? number : double.NaN;
     private double? AnalysisWeight()
     {
-        if (BotSession.Receipt?.Scan.WeightGrams is double measured) return measured;
+        if (BotSession.Receipt?.Scan.WeightGrams is double measured)
+        {
+            if (measured <= 0) throw new InvalidOperationException("Captured weight is 0 g. Reweigh and submit a new scan on the robot.");
+            return measured;
+        }
         if (string.IsNullOrWhiteSpace(weight)) return null;
         double manual = Parse(weight);
-        if (!double.IsFinite(manual) || manual < 0) throw new InvalidOperationException("Enter a valid non-negative weight.");
+        if (!double.IsFinite(manual) || manual <= 0) throw new InvalidOperationException("Enter a positive weight or leave it blank if unavailable.");
         return manual;
     }
     private async Task AnalyzeAsync()
