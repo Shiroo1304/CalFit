@@ -2,6 +2,9 @@ name: CalFitBot integration
 on:
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: calfitbot-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

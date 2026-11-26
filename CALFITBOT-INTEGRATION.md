@@ -158,7 +158,7 @@ Created:
 - CalFit/Platforms/Android/AndroidCalFitBotPhotoValidator.cs
 - CalFit/Resources/Raw/calfitbot_sample.jpg
 - tests/CalFitBot.Tests/* and tests/CalFitBot.Preview/*
-- .github/workflows/calfitbot.yml and this document
+- .github/workflows/calfitbot.yml, global.json and this document
 
 Modified:
 - ScannerView.razor and DeviceView.razor
