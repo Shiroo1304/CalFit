@@ -4,12 +4,15 @@
 @using System.Net.Sockets
 @using Microsoft.Maui.Storage
 @using Microsoft.JSInterop
+@using CalFit.Services
+@using CalFit.Models
 @implements IAsyncDisposable
 
 @inject IJSRuntime JS
 @inject CalFitApi Api
 @inject AuthSession Session
 @inject MealNotesService Notes
+@inject Esp32CameraService Esp32Camera
 
 <div class="screen" @ref="scannerElement">
     <header class="page-heading">
@@ -28,11 +31,19 @@
 
             @if (livePreview)
             {
-                <img @key="activeStreamUrl"
-                     class="food-preview"
-                     src="@activeStreamUrl"
-                     alt="ESP32-CAM live stream"
-                     @onerror="PreviewFailed" />
+                @if (!string.IsNullOrWhiteSpace(previewFrame))
+                {
+                    <img class="food-preview"
+                         src="@previewFrame"
+                         alt="ESP32-CAM live stream" />
+                }
+                else
+                {
+                    <div class="scanner-illustration">
+                        <div class="lens">◉</div>
+                        <strong>Connecting to camera…</strong>
+                    </div>
+                }
 
                 <span style="position:absolute;top:12px;left:12px;
                     z-index:3;padding:7px 10px;
@@ -105,7 +116,7 @@
 
             <input id="camera-ip"
                    class="field"
-                   placeholder="192.168.4.1"
+                   placeholder="Enter IP from Serial Monitor"
                    @bind="cameraIp"
                    disabled="@busy" />
 
@@ -115,13 +126,13 @@
 
             <input id="camera-stream"
                    class="field"
-                   placeholder="http://192.168.4.1:81/stream"
+                   placeholder="http://YOUR_ESP32_IP:81/stream"
                    @bind="streamUrl"
                    disabled="@(busy || livePreview)" />
 
             <p class="small muted">
-                Connect your phone to the ESP32 Wi-Fi network.
-                The default camera address is 192.168.4.1.
+                Use the IP assigned to the ESP32 by your phone hotspot.
+                Leave the stream URL blank to generate it from that IP.
             </p>
 
             <div class="button-row photo-actions">
@@ -134,7 +145,7 @@
 
                 <button type="button"
                         class="btn btn-outline"
-                        @onclick="StopPreview"
+                        @onclick="StopPreviewAsync"
                         disabled="@(!livePreview)">
                     Stop preview
                 </button>
@@ -402,15 +413,19 @@
 
     private readonly HttpClient motorClient = new()
     {
-        Timeout = TimeSpan.FromMilliseconds(400)
+        Timeout = TimeSpan.FromSeconds(2)
     };
 
     private readonly SemaphoreSlim motorGate = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
 
-    private string cameraIp = "192.168.4.1";
-    private string streamUrl = "http://192.168.4.1:81/stream";
-    private string? activeStreamUrl;
+    private string cameraIp = "";
+    private string streamUrl = "";
+
+    private string? previewFrame;
+    private CancellationTokenSource? previewCancellation;
+    private Task? previewTask;
+
     private string? motorHost;
 
     private string motorStatus =
@@ -478,15 +493,18 @@
             if (!disposed)
                 await InvokeAsync(StateHasChanged);
         }
-        catch (JSException)
+        catch (JSException ex)
         {
-            motorStatus =
-                "Motor controls could not load. Check wwwroot/js/esp32-controls.js.";
+            motorStatus = "Motor controls could not load: " + ex.Message;
 
             if (!disposed)
                 await InvokeAsync(StateHasChanged);
         }
     }
+
+    // =====================================
+    // MOTOR CONTROL
+    // =====================================
 
     [JSInvokable]
     public async Task MotorCommand(string direction, long sequence)
@@ -530,17 +548,14 @@
             if (direction == "stop")
                 motorHost = null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             if (!disposed)
             {
-                motorStatus =
-                    "Motor connection failed. Check Wi-Fi and the device IP.";
-
+                motorStatus = $"Motor {direction} at {motorHost}: {ex.Message}";
                 await InvokeAsync(StateHasChanged);
             }
 
-            // JavaScript stops renewing movement after a failed request.
             throw;
         }
         finally
@@ -550,14 +565,36 @@
     }
 
     private async Task SendMotorRequestAsync(
-        string host,
-        string direction)
+    string host,
+    string direction)
     {
-        using var response = await motorClient.GetAsync(
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
             $"http://{host}/control?direction={direction}"
         );
 
-        response.EnsureSuccessStatusCode();
+        request.Version = HttpVersion.Version11;
+        request.VersionPolicy =
+            HttpVersionPolicy.RequestVersionExact;
+
+        request.Headers.ConnectionClose = true;
+
+        request.Headers.TryAddWithoutValidation(
+            "Cache-Control",
+            "no-cache"
+        );
+
+        using var response = await motorClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string detail =
+                await response.Content.ReadAsStringAsync();
+
+            throw new HttpRequestException(
+                $"HTTP {(int)response.StatusCode}: {detail}"
+            );
+        }
     }
 
     private async Task StopMotorAsync()
@@ -571,17 +608,30 @@
         }
         catch (JSException)
         {
-            // Firmware timeout is the fallback if the WebView is unavailable.
+            // The firmware timeout remains the independent fallback.
         }
     }
 
-    private void StartPreview()
+    // =====================================
+    // NATIVE LIVE PREVIEW
+    // =====================================
+
+    private async Task StartPreview()
     {
         if (busy || disposed)
             return;
 
+        string requestedUrl = streamUrl.Trim();
+
+        if (string.IsNullOrWhiteSpace(requestedUrl)
+            && TryGetCameraAddress(out var cameraAddress))
+        {
+            requestedUrl = $"http://{cameraAddress}:81/stream";
+            streamUrl = requestedUrl;
+        }
+
         if (!Uri.TryCreate(
-                streamUrl.Trim(),
+                requestedUrl,
                 UriKind.Absolute,
                 out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp
@@ -594,30 +644,117 @@
             return;
         }
 
-        activeStreamUrl = uri.AbsoluteUri;
-        livePreview = true;
-        message = "";
-    }
+        await StopPreviewAsync();
 
-    private void StopPreview()
-    {
-        livePreview = false;
-        activeStreamUrl = null;
-    }
-
-    private async Task PreviewFailed()
-    {
-        if (disposed || !livePreview)
+        if (disposed)
             return;
 
-        StopPreview();
-        await StopMotorAsync();
+        message = "";
+        previewFrame = null;
+        livePreview = true;
 
-        Show(
-            "Live preview could not load. Check the camera URL and Wi-Fi.",
-            true
+        var cancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                lifetime.Token
+            );
+
+        previewCancellation = cancellation;
+
+        previewTask = RunPreviewAsync(
+            uri.AbsoluteUri,
+            cancellation
         );
     }
+
+    private async Task RunPreviewAsync(
+        string url,
+        CancellationTokenSource cancellation)
+    {
+        CancellationToken token = cancellation.Token;
+
+        try
+        {
+            await Esp32Camera.ReadPreviewAsync(
+                url,
+                async frame =>
+                {
+                    string image =
+                        "data:image/jpeg;base64,"
+                        + Convert.ToBase64String(frame);
+
+                    await InvokeAsync(() =>
+                    {
+                        if (disposed
+                            || token.IsCancellationRequested
+                            || previewCancellation != cancellation)
+                        {
+                            return;
+                        }
+
+                        previewFrame = image;
+                        StateHasChanged();
+                    });
+                },
+                token
+            );
+        }
+        catch (OperationCanceledException)
+            when (token.IsCancellationRequested)
+        {
+            // Normal stop, capture, or navigation.
+        }
+        catch (Exception ex)
+        {
+            if (!disposed && !token.IsCancellationRequested)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (previewCancellation != cancellation)
+                        return;
+
+                    livePreview = false;
+                    previewFrame = null;
+
+                    Show(
+                        "Live preview failed: " + ex.Message,
+                        true
+                    );
+
+                    StateHasChanged();
+                });
+
+                await StopMotorAsync();
+            }
+        }
+        finally
+        {
+            if (previewCancellation == cancellation)
+                previewCancellation = null;
+
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task StopPreviewAsync()
+    {
+        Task? previousTask = previewTask;
+        previewTask = null;
+
+        var cancellation = previewCancellation;
+        previewCancellation = null;
+
+        livePreview = false;
+        previewFrame = null;
+
+        cancellation?.Cancel();
+
+        if (previousTask != null)
+            await previousTask;
+    }
+
+    // =====================================
+    // MEAL POPUP
+    // =====================================
 
     private async Task OpenMealPopup()
     {
@@ -634,8 +771,6 @@
     {
         showMealPopup = false;
         popupSwipeStarted = false;
-
-        // Preserve the captured image and meal draft.
     }
 
     private void PopupKeyDown(KeyboardEventArgs e)
@@ -680,6 +815,10 @@
         popupSwipeStarted = false;
     }
 
+    // =====================================
+    // CAMERA ADDRESS VALIDATION
+    // =====================================
+
     private bool TryGetCameraAddress(out IPAddress address)
     {
         address = IPAddress.None;
@@ -694,6 +833,21 @@
         address = parsed;
         return true;
     }
+
+    private static bool IsPrivateIpv4(IPAddress address)
+    {
+        byte[] bytes = address.GetAddressBytes();
+
+        return bytes[0] == 10
+            || (bytes[0] == 172
+                && bytes[1] >= 16
+                && bytes[1] <= 31)
+            || (bytes[0] == 192 && bytes[1] == 168);
+    }
+
+    // =====================================
+    // CAPTURE
+    // =====================================
 
     private async Task CaptureEsp32Async()
     {
@@ -715,9 +869,8 @@
         try
         {
             await StopMotorAsync();
+            await StopPreviewAsync();
 
-            // Pause MJPEG while requesting the still image.
-            StopPreview();
             await InvokeAsync(StateHasChanged);
             await Task.Delay(200, lifetime.Token);
 
@@ -728,13 +881,18 @@
 
             response.EnsureSuccessStatusCode();
 
-            byte[] image = await response.Content.ReadAsByteArrayAsync(
-                lifetime.Token
-            );
+            byte[] image =
+                await response.Content.ReadAsByteArrayAsync(
+                    lifetime.Token
+                );
 
-            if (image.Length == 0 || image.Length > 10 * 1024 * 1024)
+            if (image.Length == 0
+                || image.Length > 10 * 1024 * 1024)
             {
-                Show("Camera image is empty or exceeds 10 MB.", true);
+                Show(
+                    "Camera image is empty or exceeds 10 MB.",
+                    true
+                );
                 return;
             }
 
@@ -744,7 +902,10 @@
                 || image[^2] != 0xFF
                 || image[^1] != 0xD9)
             {
-                Show("Camera did not return a complete JPEG image.", true);
+                Show(
+                    "Camera did not return a complete JPEG image.",
+                    true
+                );
                 return;
             }
 
@@ -762,7 +923,6 @@
             if (disposed)
                 return;
 
-            // A new photo starts a new meal draft.
             Clear();
 
             photoPath = pendingPath;
@@ -785,15 +945,22 @@
         }
         catch (OperationCanceledException)
         {
-            Show("Camera capture timed out. Check the Wi-Fi connection.", true);
+            Show(
+                "Camera capture timed out. Check the Wi-Fi connection.",
+                true
+            );
         }
         catch (Exception ex)
         {
-            Show("ESP32-CAM capture failed: " + ex.Message, true);
+            Show(
+                "ESP32-CAM capture failed: " + ex.Message,
+                true
+            );
         }
         finally
         {
             DeleteCachedPhoto(pendingPath);
+
             capturingEsp32 = false;
             busy = false;
 
@@ -802,14 +969,9 @@
         }
     }
 
-    private static bool IsPrivateIpv4(IPAddress address)
-    {
-        byte[] bytes = address.GetAddressBytes();
-
-        return bytes[0] == 10
-            || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
-            || (bytes[0] == 192 && bytes[1] == 168);
-    }
+    // =====================================
+    // AI ANALYSIS
+    // =====================================
 
     private static double Parse(string input)
     {
@@ -849,7 +1011,9 @@
             var result = await Api.AnalyzeAsync(
                 Session.Token!,
                 photoPath,
-                grams > 0 && double.IsFinite(grams) ? grams : null
+                grams > 0 && double.IsFinite(grams)
+                    ? grams
+                    : null
             );
 
             if (disposed || version != fileRevision)
@@ -857,7 +1021,10 @@
 
             if (!result.IsFood)
             {
-                Show("The image does not appear to contain food.", true);
+                Show(
+                    "The image does not appear to contain food.",
+                    true
+                );
                 return;
             }
 
@@ -873,10 +1040,21 @@
                 );
             }
 
-            calories = result.Calories.ToString(CultureInfo.InvariantCulture);
-            protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture);
-            carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture);
-            fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
+            calories = result.Calories.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+            protein = result.ProteinGrams.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+            carbs = result.CarbsGrams.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+            fat = result.FatGrams.ToString(
+                CultureInfo.InvariantCulture
+            );
 
             if (!string.IsNullOrWhiteSpace(result.Notes))
                 notes = result.Notes;
@@ -900,15 +1078,26 @@
         }
     }
 
+    // =====================================
+    // SAVE TO JOURNAL
+    // =====================================
+
     private async Task SaveAsync()
     {
         if (busy || disposed)
             return;
 
-        double grams = string.IsNullOrWhiteSpace(weight) ? 0 : Parse(weight);
-        double p = string.IsNullOrWhiteSpace(protein) ? 0 : Parse(protein);
-        double c = string.IsNullOrWhiteSpace(carbs) ? 0 : Parse(carbs);
-        double f = string.IsNullOrWhiteSpace(fat) ? 0 : Parse(fat);
+        double grams = string.IsNullOrWhiteSpace(weight)
+            ? 0 : Parse(weight);
+
+        double p = string.IsNullOrWhiteSpace(protein)
+            ? 0 : Parse(protein);
+
+        double c = string.IsNullOrWhiteSpace(carbs)
+            ? 0 : Parse(carbs);
+
+        double f = string.IsNullOrWhiteSpace(fat)
+            ? 0 : Parse(fat);
 
         if (string.IsNullOrWhiteSpace(foodName)
             || !int.TryParse(calories, out int kcal)
@@ -929,6 +1118,8 @@
         saving = true;
         message = "";
 
+        bool savedToServer = false;
+
         try
         {
             var saved = await Api.SaveMealAsync(
@@ -944,6 +1135,8 @@
                     FatGrams = f
                 }
             );
+
+            savedToServer = true;
 
             try
             {
@@ -981,7 +1174,13 @@
         }
         catch (Exception ex)
         {
-            Show("Could not save meal: " + ex.Message, true);
+            Show(
+                savedToServer
+                    ? "Meal was saved, but the screen could not update: "
+                        + ex.Message
+                    : "Could not save meal: " + ex.Message,
+                true
+            );
         }
         finally
         {
@@ -992,6 +1191,10 @@
                 DeleteCachedPhoto(photoPath);
         }
     }
+
+    // =====================================
+    // DRAFT / CACHE
+    // =====================================
 
     private void Show(string text, bool failure)
     {
@@ -1013,6 +1216,7 @@
         fat = "";
         ingredients = "";
         notes = "";
+
         message = "";
         hasError = false;
         previewData = null;
@@ -1040,6 +1244,10 @@
         }
     }
 
+    // =====================================
+    // CLEANUP
+    // =====================================
+
     public async ValueTask DisposeAsync()
     {
         if (disposed)
@@ -1049,7 +1257,6 @@
         motorReady = false;
         fileRevision++;
 
-        StopPreview();
         lifetime.Cancel();
 
         try
@@ -1080,6 +1287,8 @@
             motorClient.Dispose();
         }
 
+        await StopPreviewAsync();
+
         cameraClient.Dispose();
 
         if (!busy)
@@ -1088,10 +1297,16 @@
         lifetime.Dispose();
         motorReference?.Dispose();
 
-        if (motorBinding != null)
-            await motorBinding.DisposeAsync();
+        try
+        {
+            if (motorBinding != null)
+                await motorBinding.DisposeAsync();
 
-        if (motorModule != null)
-            await motorModule.DisposeAsync();
+            if (motorModule != null)
+                await motorModule.DisposeAsync();
+        }
+        catch (JSException)
+        {
+        }
     }
 }

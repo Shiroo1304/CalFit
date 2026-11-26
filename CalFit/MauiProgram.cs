@@ -20,6 +20,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<AuthSession>();
         builder.Services.AddSingleton<AppearanceService>();
         builder.Services.AddSingleton<MealNotesService>();
+        builder.Services.AddSingleton<Esp32CameraService>();
 
         return builder.Build();
     }
