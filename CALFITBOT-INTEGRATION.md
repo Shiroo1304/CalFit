@@ -33,6 +33,8 @@ result in the existing popup, then Save to journal. Simulation changes only robo
 communication; the real application still needs a functioning backend for login,
 AI and saving. A separate browser harness below uses explicit test-only API doubles.
 
+Simulator receipts and remembered addresses use separate storage from real robot data.
+
 The simulation flag is **off by default**, even in Debug builds. It is rejected in
 Release builds. Mock service code is excluded outside DEBUG; production does not
 render simulation controls. Clean the Debug output when switching modes:

@@ -4,10 +4,11 @@ namespace CalFit.Services;
 
 public sealed class CalFitBotAddressStore : ICalFitBotAddressStore
 {
+    private static string Key => CalFitBotConfiguration.SimulationEnabled ? "calfit.bot.simulatorAddress" : "calfit.bot.lastAddress";
     public string? LastAddress
     {
-        get => Preferences.Default.Get("calfit.bot.lastAddress", "");
-        set => Preferences.Default.Set("calfit.bot.lastAddress", value ?? "");
+        get => Preferences.Default.Get(Key, "");
+        set => Preferences.Default.Set(Key, value ?? "");
     }
 }
 

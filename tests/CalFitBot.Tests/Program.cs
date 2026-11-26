@@ -195,6 +195,61 @@ Test("address validation rejects cloud/backend and endpoint URLs", async () =>
         await Throws<ArgumentException>(() => { CalFitBotService.ParseAddress(invalid); return Task.CompletedTask; });
 });
 
+Test("decoder rejection prevents storage and acknowledgement", async () =>
+{
+    var (_, m, inbox, _) = Setup(); m.Submit();
+    await using var session = new CalFitBotSession(m, inbox, new AddressStore(), new RejectingValidator());
+    await session.TickAsync(ct);
+    Assert(session.Receipt == null && m.AckCalls == 0);
+});
+Test("acknowledgement only occurs after an atomic photo/metadata commit", async () =>
+{
+    var (_, m, inbox, _) = Setup(); string id = m.Submit();
+    var inspected = new InspectingService(m, async receivedId =>
+    {
+        var receipt = await inbox.FindAsync("", receivedId, ct);
+        Assert(receipt != null && File.Exists(receipt.PhotoPath) && !receipt.Acknowledged);
+    });
+    await using var session = new CalFitBotSession(inspected, inbox, new AddressStore());
+    await session.TickAsync(ct); Assert(session.CanAnalyze && inspected.Inspections == 1);
+});
+Test("restart restores an unacknowledged receipt without downloading again", async () =>
+{
+    var (_, m, inbox, _) = Setup(); string id = m.Submit();
+    await inbox.StoreAsync("user", address, new(id, 385, jpeg.Length), jpeg, ct);
+    await using var session = new CalFitBotSession(m, inbox, new AddressStore());
+    await session.StartAsync("user", ct);
+    for (int i = 0; i < 30 && !session.CanAnalyze; i++) await Task.Delay(10);
+    Assert(session.CanAnalyze && m.PhotoDownloads == 0 && m.AckCalls == 1);
+});
+Test("acknowledgement 404 retains receipt but blocks successful submission", async () =>
+{
+    var (_, m, inbox, _) = Setup(); string id = m.Submit();
+    var canceledAck = new InspectingService(m, _ => throw new CalFitBotScanCanceledException());
+    await using var session = new CalFitBotSession(canceledAck, inbox, new AddressStore());
+    await session.TickAsync(ct);
+    Assert(!session.CanAnalyze && session.Receipt is { Canceled: true });
+    Assert((await inbox.FindAsync("", id, ct)) is { Canceled: true, Acknowledged: false });
+});
+Test("leaving scanner cancels its poll loop", async () =>
+{
+    var (_, m, inbox, _) = Setup(); var counter = new InspectingService(m, _ => Task.CompletedTask);
+    var session = new CalFitBotSession(counter, inbox, new AddressStore());
+    await session.StartAsync("user", ct);
+    for (int i = 0; i < 30 && counter.StatusCalls == 0; i++) await Task.Delay(10);
+    await session.DisposeAsync();
+    int calls = counter.StatusCalls;
+    await session.TickAsync(ct);
+    Assert(counter.StatusCalls == calls);
+});
+Test("standby preserves a pending submitted scan", async () =>
+{
+    var (session, m, _, _) = Setup(); m.Standby = true; m.Submit();
+    await session.TickAsync(ct);
+    Assert(session.CanAnalyze && session.Receipt!.Scan.WeightGrams == 385 && m.Standby);
+    await session.DisposeAsync();
+});
+
 int failures = 0;
 foreach (var (name, action) in tests)
 {
@@ -212,4 +267,19 @@ sealed class Discovery : ICalFitBotDiscovery { public Task<Uri?> DiscoverAsync(C
 sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => Task.FromResult(handler(request));
+}
+
+sealed class RejectingValidator : ICalFitBotPhotoValidator
+{
+    public Task ValidateAsync(byte[] jpeg, CancellationToken ct) => throw new InvalidDataException("Cannot decode JPEG.");
+}
+sealed class InspectingService(ICalFitBotService inner, Func<string, Task> inspect) : ICalFitBotService
+{
+    public int Inspections, StatusCalls;
+    public Task<Uri?> DiscoverAsync(CancellationToken ct) => inner.DiscoverAsync(ct);
+    public Task<CalFitBotStatus> GetStatusAsync(Uri a, CancellationToken ct) { StatusCalls++; return inner.GetStatusAsync(a, ct); }
+    public Task<CalFitBotWeight> GetWeightAsync(Uri a, CancellationToken ct) => inner.GetWeightAsync(a, ct);
+    public Task<CalFitBotScan?> GetScanAsync(Uri a, CancellationToken ct) => inner.GetScanAsync(a, ct);
+    public Task<byte[]> GetPhotoAsync(Uri a, CalFitBotScan s, CancellationToken ct) => inner.GetPhotoAsync(a, s, ct);
+    public async Task AcknowledgeAsync(Uri a, string id, CancellationToken ct) { Inspections++; await inspect(id); await inner.AcknowledgeAsync(a, id, ct); }
 }

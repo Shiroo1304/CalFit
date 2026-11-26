@@ -22,7 +22,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<MealNotesService>();
         builder.Services.AddSingleton<ICalFitBotAddressStore, CalFitBotAddressStore>();
         builder.Services.AddSingleton(new CalFitBotInbox(
-            Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory, "calfitbot-inbox")));
+            Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory,
+                CalFitBotConfiguration.SimulationEnabled ? "calfitbot-simulator-inbox" : "calfitbot-inbox")));
         builder.Services.AddSingleton<ICalFitBotDiscovery, CalFit.Platforms.Android.AndroidCalFitBotDiscovery>();
 #if DEBUG && CALFITBOT_SIMULATION
         builder.Services.AddSingleton<ICalFitBotService>(_ =>
