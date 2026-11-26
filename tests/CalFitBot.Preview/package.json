@@ -1,0 +1,6 @@
+{
+  "name": "calfitbot-scanner-browser-tests",
+  "private": true,
+  "scripts": { "test": "node browser-test.cjs" },
+  "devDependencies": { "playwright": "1.56.1" }
+}

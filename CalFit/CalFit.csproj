@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0-android</TargetFramework>
@@ -26,6 +26,17 @@
 		<AndroidUseCleartextTraffic>true</AndroidUseCleartextTraffic>
 	</PropertyGroup>
 
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug' and '$(CalFitBotSimulation)' == 'true'">
+        <DefineConstants>$(DefineConstants);CALFITBOT_SIMULATION</DefineConstants>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+        <EmbeddedResource Include="Resources/Raw/calfitbot_sample.jpg" LogicalName="CalFit.Bot.Sample.jpg" />
+    </ItemGroup>
+    <Target Name="ValidateCalFitBotSimulation" BeforeTargets="PrepareForBuild"
+            Condition="'$(Configuration)' != 'Debug' and '$(CalFitBotSimulation)' == 'true'">
+        <Error Text="CalFitBot simulation is available only in Debug builds." />
+    </Target>
+
 	<!-- App icon and splash screen -->
 	<ItemGroup>
 		<MauiIcon Include="Resources\AppIcon\calfitlogo.png" BaseSize="1024,1024" />
@@ -35,7 +46,8 @@
 
 	<!-- MAUI dependencies -->
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.110" />
+		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.110" />
 
 		<PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.110" />
 	</ItemGroup>

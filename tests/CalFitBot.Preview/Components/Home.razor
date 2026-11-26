@@ -1,0 +1,4 @@
+@page "/"
+<div class="calfit-app theme-emerald"><div class="mobile-shell"><ScannerView OnSaved="AfterSaved" /></div></div>
+@if (saved) { <p role="status" id="saved-result">Meal saved to test journal.</p> }
+@code { private bool saved; private void AfterSaved() => saved = true; }

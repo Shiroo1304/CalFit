@@ -18,3 +18,7 @@
 *.ldf
 *.db
 *.sqlite
+# Scanner browser test output
+tests/CalFitBot.Preview/artifacts/
+tests/CalFitBot.Preview/preview.log
+**/node_modules/

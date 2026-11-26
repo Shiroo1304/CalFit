@@ -86,3 +86,10 @@ Do not put database connection strings, Groq API secrets, or JWT signing keys in
 Check that the MAUI workload installed matches `Microsoft.Maui.Controls` and `Microsoft.AspNetCore.Components.WebView.Maui` version `10.0.110` used by your supplied project. Do **not** paste C# into `CalFit.csproj`; it is XML. Restore packages and build the **CalFit** startup project. Send the exact compiler error and filename rather than changing the backend.
 
 No test APK was generated here. Final Android build, network test, camera permissions and authenticated API/SQL tests must be performed in Visual Studio on your machine.
+
+## ESP32-S3 robot photo/weight receiver
+
+See [CalFitBot integration](CALFITBOT-INTEGRATION.md) for the current scanner flow,
+protocol, development simulator, APK build commands and test instructions. The
+robot owns capture, motor positioning and live preview; the app receives completed
+photo/weight submissions for manual AI analysis and journal saving.
