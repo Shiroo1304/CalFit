@@ -1,77 +1,8 @@
 <div class="screen">
-    <header class="page-heading">
-        <div>
-            <span class="eyebrow">CALFIT HARDWARE</span>
-            <h1>Device center<span class="accent">.</span></h1>
-            <p>Your CalFitBot Wi-Fi controls.</p>
-        </div>
-
-        <div class="heading-icon">▣</div>
-    </header>
-
-    <div class="device-hero">
-        <div class="device-glyph">▣</div>
-
-        <span class="device-state">
-            ○ NOT CONFIGURED
-        </span>
-
-        <h2>CalFitBot</h2>
-
-        <p>
-            Camera preview, image capture, motor controls,
-            and scale readings will use Wi-Fi.
-        </p>
-    </div>
-
-    <div class="section-head">
-        <h2>Wi-Fi connection</h2>
-    </div>
-
-    <div class="surface form-surface">
-        <strong>Device setup</strong>
-
-        <p class="small muted">
-            Connect your phone and CalFitBot to the same
-            Wi-Fi network. Camera addresses can be entered
-            in the food scanner's Camera settings.
-        </p>
-
-        <div class="notice info">
-            Scale readings and motor commands will be
-            connected when the ESP32 firmware is implemented.
-        </div>
-    </div>
-
-    <div class="section-head">
-        <h2>Food weight</h2>
-    </div>
-
-    <div class="device-hero">
-        <span class="eyebrow">SCALE READING</span>
-
-        <h2>— g</h2>
-
-        <p>
-            Waiting for Wi-Fi scale integration.
-            You can enter weight manually in the food scanner.
-        </p>
-    </div>
-
-    <div class="section-head">
-        <h2>Food scanner</h2>
-    </div>
-
-    <button type="button"
-            class="btn btn-primary full"
-            @onclick="() => OpenScanner.InvokeAsync()">
-        Open food scanner →
-    </button>
-
+    <header class="page-heading"><div><span class="eyebrow">CALFIT HARDWARE</span><h1>Device center<span class="accent">.</span></h1><p>Receive food photos from CalFitBot.</p></div></header>
+    <div class="device-hero"><div class="device-glyph">▣</div><h2>CalFitBot</h2><p>The robot handles its camera and height controls. Press CAPTURE on its touchscreen. CalFit opens the food scanner when the photo arrives.</p></div>
+    <div class="notice info">Reception runs while CalFit is signed in and active on the hotspot network. Open the food scanner for connection status and a manual IP fallback.</div>
+    <button class="btn btn-primary full" @onclick="() => OpenScanner.InvokeAsync()">Open food scanner →</button>
     <div class="bottom-whitespace"></div>
 </div>
-
-@code {
-    [Parameter]
-    public EventCallback OpenScanner { get; set; }
-}
+@code { [Parameter] public EventCallback OpenScanner { get; set; } }

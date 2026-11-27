@@ -1,13 +1,14 @@
 @inject AuthSession Session
 @inject AppearanceService Appearance
 @inject CalFitApi Api
+@inject CalFitBotForegroundReceiver BotReceiver
+@inject CalFitAppActivity AppActivity
 @implements IAsyncDisposable
 
 <div class="calfit-app theme-@Appearance.Theme" style="@ThemeStyle">
     @if (!ready)
     {
         <div class="boot-screen">
-            <div class="boot-icon">✦</div>
             <strong>CalFit</strong>
             <span>Preparing your wellness space…</span>
         </div>
@@ -162,26 +163,46 @@
     {
         Session.Changed += OnStateChanged;
         Appearance.Changed += OnStateChanged;
+        BotReceiver.ScanReady += OnRobotScanReady;
+        AppActivity.Changed += OnStateChanged;
 
         await Session.RestoreAsync();
 
         ready = true;
 
-        if (Session.IsSignedIn)
+        if (Session.IsSignedIn && AppActivity.IsActive)
             StartHeartbeat();
+        await UpdateRobotOwnerAsync();
+    }
+
+    private Task UpdateRobotOwnerAsync() => BotReceiver.SetOwnerAsync(
+        Session.IsSignedIn && Session.Profile != null
+            ? Session.Profile.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) : null);
+
+    private void OnRobotScanReady(string scanId)
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (disposed || !Session.IsSignedIn || !AppActivity.IsActive) return;
+            if (!BotReceiver.MarkPresented(scanId)) return;
+            Navigate("scan");
+            StateHasChanged();
+        });
     }
 
     private void OnStateChanged()
     {
-        _ = InvokeAsync(() =>
+        _ = InvokeAsync(async () =>
         {
             if (disposed)
                 return;
 
-            if (Session.IsSignedIn)
+            if (Session.IsSignedIn && AppActivity.IsActive)
                 StartHeartbeat();
             else
                 StopHeartbeat();
+
+            await UpdateRobotOwnerAsync();
 
             StateHasChanged();
         });
@@ -371,6 +392,9 @@
 
         Session.Changed -= OnStateChanged;
         Appearance.Changed -= OnStateChanged;
+        BotReceiver.ScanReady -= OnRobotScanReady;
+        AppActivity.Changed -= OnStateChanged;
+        await BotReceiver.DisposeAsync();
 
         var runningTask = heartbeatTask;
 

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../CalFit/Models/CalFitBotModels.cs" Link="Models.cs" />
+    <Compile Include="../../CalFit/Services/CalFitBot/*.cs" Exclude="../../CalFit/Services/CalFitBot/CalFitBotPlatform.cs" Link="%(Filename)%(Extension)" />
+    <None Include="../../CalFit/Resources/Raw/calfitbot_sample.jpg" Link="sample.jpg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

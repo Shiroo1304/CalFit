@@ -1,181 +1,104 @@
 @using System.Globalization
-@using System.Net
-@using System.Net.Http
-@using System.Net.Sockets
-@using Microsoft.Maui.Storage
-@using Microsoft.JSInterop
-@using CalFit.Services
 @using CalFit.Models
+@using CalFit.Services
+@using Microsoft.Maui.Storage
 @implements IAsyncDisposable
 
-@inject IJSRuntime JS
 @inject CalFitApi Api
 @inject AuthSession Session
 @inject MealNotesService Notes
-@inject Esp32CameraService Esp32Camera
+@inject CalFitBotSession BotSession
+@inject ICalFitBotService Robot
+@inject ICalFitBotAddressStore RobotAddress
 
-<div class="screen" @ref="scannerElement">
+<div class="screen">
     <header class="page-heading">
         <div>
             <span class="eyebrow">SMART NUTRITION</span>
             <h1>Food scanner<span class="accent">.</span></h1>
-            <p>Preview, capture, analyze and log.</p>
+            <p>Your robot captures. You review and track.</p>
         </div>
     </header>
 
-    <div class="surface form-surface" style="margin-bottom:16px">
-        <h2 style="margin-top:0">ESP32-CAM</h2>
-
-        <div class="scanner-feature"
-             aria-label="ESP32 camera live preview">
-
-            @if (livePreview)
+    <div class="surface form-surface bot-receiver">
+        <div class="modal-top"><h2>CalFitBot</h2><span class="bot-state">@ConnectionLabel</span></div>
+        <p class="small muted" role="status" aria-live="polite">@BotSession.Message</p>
+        @if (BotSession.Address != null)
+        {
+            <p class="small muted">Connected to @BotSession.Address.Authority</p>
+        }
+        <div class="scanner-feature bot-photo-viewer">
+            @if (!string.IsNullOrWhiteSpace(previewData))
             {
-                @if (!string.IsNullOrWhiteSpace(previewFrame))
-                {
-                    <img class="food-preview"
-                         src="@previewFrame"
-                         alt="ESP32-CAM live stream" />
-                }
-                else
-                {
-                    <div class="scanner-illustration">
-                        <div class="lens">◉</div>
-                        <strong>Connecting to camera…</strong>
-                    </div>
-                }
-
-                <span style="position:absolute;top:12px;left:12px;
-                    z-index:3;padding:7px 10px;
-                    border-radius:8px;background:#07130f;
-                    color:#9af7c5;font-size:11px">
-                    LIVE · ESP32-CAM
-                </span>
+                <img class="food-preview" src="@previewData" alt="Food photo received from CalFitBot" />
             }
             else
             {
                 <div class="scanner-illustration">
-                    <div class="lens">◉</div>
-                    <strong>ESP32-CAM live preview</strong>
-                    <p>
-                        Open camera settings below to configure
-                        and start your camera.
-                    </p>
+                    <div class="lens">▧</div><strong>@ViewerTitle</strong>
+                    <p>Press CAPTURE on the robot touchscreen. Its photo will appear here automatically.</p>
                 </div>
             }
-
-            <span class="scanner-corner top-left"></span>
-            <span class="scanner-corner top-right"></span>
-            <span class="scanner-corner bottom-left"></span>
-            <span class="scanner-corner bottom-right"></span>
         </div>
-
+        <p class="small muted">Analyze Food estimates portion weight and nutrition from the photo. Review and edit the estimates before saving.</p>
+        @if (BotSession.Receipt is { Acknowledged: false, Canceled: false })
+        {
+            <div class="notice info">The photo is stored locally. Waiting for robot acknowledgement before analysis.</div>
+        }
+        @if (BotSession.Receipt is { Canceled: true })
+        {
+            <div class="notice error">This scan was not confirmed. Submit a new scan on the robot.</div>
+        }
         <div class="button-row photo-actions">
-            <button type="button"
-                    class="btn btn-primary full"
-                    @onclick="CaptureEsp32Async"
-                    disabled="@busy">
-                @(capturingEsp32
-                    ? "Capturing image…"
-                    : "◎ Capture image")
-            </button>
+            <button type="button" class="btn btn-primary" disabled="@(!CanAnalyze)" @onclick="AnalyzeAsync">@(analyzing ? "Analyzing…" : "✦ Analyze Food")</button>
+            <button type="button" class="btn btn-outline" disabled="@(busy || !BotSession.CanAnalyze || savedScanId == draftScanId)" @onclick="OpenMealPopup">Review meal</button>
         </div>
-
-        <div class="button-row esp32-motors">
-            <button type="button"
-                    class="btn btn-outline"
-                    data-motor="forward"
-                    disabled="@(!motorReady || busy || showMealPopup)">
-                ↑ Up
-            </button>
-
-            <button type="button"
-                    class="btn btn-outline"
-                    data-motor="backward"
-                    disabled="@(!motorReady || busy || showMealPopup)">
-                ↓ Down
-            </button>
-        </div>
-
-        <p class="small muted" role="status">
-            @motorStatus
-        </p>
-
-        <details style="margin-top:16px;
-            border-top:1px solid var(--surface-border);
-            padding-top:16px">
-
-            <summary style="cursor:pointer;color:var(--accent);
-                font-weight:700">
-                Camera settings
-            </summary>
-
-            <label class="field-label" for="camera-ip">
-                ESP32-CAM IP address
-            </label>
-
-            <input id="camera-ip"
-                   class="field"
-                   placeholder="Enter IP from Serial Monitor"
-                   @bind="cameraIp"
-                   disabled="@busy" />
-
-            <label class="field-label" for="camera-stream">
-                Live stream URL
-            </label>
-
-            <input id="camera-stream"
-                   class="field"
-                   placeholder="http://YOUR_ESP32_IP:81/stream"
-                   @bind="streamUrl"
-                   disabled="@(busy || livePreview)" />
-
-            <p class="small muted">
-                Use the IP assigned to the ESP32 by your phone hotspot.
-                Leave the stream URL blank to generate it from that IP.
-            </p>
-
-            <div class="button-row photo-actions">
-                <button type="button"
-                        class="btn btn-outline"
-                        @onclick="StartPreview"
-                        disabled="@(busy || livePreview)">
-                    Start live preview
-                </button>
-
-                <button type="button"
-                        class="btn btn-outline"
-                        @onclick="StopPreviewAsync"
-                        disabled="@(!livePreview)">
-                    Stop preview
-                </button>
+        @if (BotSession.Receipt != null)
+        {
+            <button type="button" class="subtle-link" disabled="@(busy || connecting)" @onclick="DiscardReceipt">Discard received draft</button>
+        }
+        <details class="bot-connection-settings">
+            <summary>Robot connection</summary>
+            <label class="field-label" for="robot-address">Manual IP address (optional)</label>
+            <input id="robot-address" class="field" @bind="manualAddress" placeholder="calfitbot.local or robot IP" disabled="@(connecting || busy)" />
+            <p class="small muted">The robot joins your phone hotspot. Leave this blank for automatic discovery. Only successfully verified addresses are remembered.</p>
+            <div class="button-row">
+                <button type="button" class="btn btn-outline" disabled="@(connecting || busy)" @onclick="Reconnect">@(connecting ? "Connecting…" : "Connect / reconnect")</button>
+                <button type="button" class="btn btn-outline" disabled="@(connecting || busy)" @onclick="Retry">Retry transfer</button>
             </div>
         </details>
     </div>
 
-    <div class="scanner-tip">
-        <span>✧</span>
-        Capture your meal, review its details, then save it to your journal.
-    </div>
-
     @if (!showMealPopup && !string.IsNullOrWhiteSpace(message))
     {
-        <div class="notice @(hasError ? "error" : "success")"
-             role="status">
-            @message
-        </div>
+        <div class="notice @(hasError ? "error" : "success")" role="status">@message</div>
     }
 
-    <div class="button-row photo-actions">
-        <button type="button"
-                class="btn btn-outline full"
-                @onclick="OpenMealPopup"
-                disabled="@busy">
-            @(string.IsNullOrWhiteSpace(photoPath)
-                ? "＋ Enter meal manually"
-                : "Review captured meal")
-        </button>
-    </div>
+    @if (IsSimulation)
+    {
+        <details class="surface form-surface bot-simulation" open>
+            <summary>Development simulator · no physical robot</summary>
+            <label class="field-label" for="mock-scenario">Next submission</label>
+            <select id="mock-scenario" class="field" @bind="simulationScenario">
+                <option value="Normal">Successful transfer</option>
+                <option value="MissingWeight">Photo-only capture</option>
+                <option value="PhotoFailures">Photo fails twice, then succeeds</option>
+                <option value="CanceledScan">Canceled before photo arrives</option>
+                <option value="AcknowledgementFailures">Acknowledgement fails twice</option>
+                <option value="WrongPhotoSize">Photo size mismatch</option>
+            </select>
+            <div class="button-row photo-actions">
+                <button class="btn btn-outline" @onclick="SimulateSubmit" disabled="@busy">Submit sample meal</button>
+                <button class="btn btn-outline" @onclick="SimulateDuplicate" disabled="@busy">Replay duplicate</button>
+            </div>
+            <div class="button-row photo-actions">
+                <button class="btn btn-outline" @onclick="SimulateConnection">Connect / disconnect</button>
+                <button class="btn btn-outline" @onclick="SimulateStandby">Toggle standby</button>
+                <button class="btn btn-outline" @onclick="SimulateTimeout">Toggle timeout</button>
+            </div>
+            <p class="small muted">These controls and the sample illustration are available only in a simulation-enabled Debug build. AI still uses your real backend.</p>
+        </details>
+    }
 
     @if (showMealPopup)
     {
@@ -236,7 +159,7 @@
 
                         <button type="button"
                                 class="text-link"
-                                @onclick="Clear"
+                                @onclick="ResetNutrition"
                                 disabled="@busy">
                             Reset ↻
                         </button>
@@ -271,7 +194,7 @@
 
                         <div>
                             <label class="field-label" for="food-weight">
-                                Weight (g) · verify AI estimate
+                                Weight (g) · estimated / editable
                             </label>
 
                             <input id="food-weight"
@@ -279,7 +202,7 @@
                                    type="number"
                                    min="0"
                                    step="0.1"
-                                   placeholder="Enter weight in grams"
+                                   placeholder="Estimated after analysis, or enter manually"
                                    @bind="weight"
                                    disabled="@busy" />
                         </div>
@@ -289,7 +212,7 @@
                             class="btn btn-ai full"
                             style="margin-top:16px"
                             @onclick="AnalyzeAsync"
-                            disabled="@(busy || string.IsNullOrWhiteSpace(photoPath))">
+                            disabled="@(!CanAnalyze)">
                         @(analyzing
                             ? "Analyzing your food…"
                             : "✦ Analyze with CalFit AI")
@@ -380,7 +303,7 @@
                     <button type="button"
                             class="btn btn-primary full"
                             @onclick="SaveAsync"
-                            disabled="@busy">
+                            disabled="@(busy || !BotSession.CanAnalyze || savedScanId == draftScanId)">
                         @(saving
                             ? "Saving meal…"
                             : "Save to my food journal →")
@@ -394,919 +317,272 @@
 </div>
 
 @code {
-    [Parameter]
-    public EventCallback OnSaved { get; set; }
-
-    [Parameter]
-    public EventCallback OpenDevice { get; set; }
-
-    private ElementReference scannerElement;
-
-    private IJSObjectReference? motorModule;
-    private IJSObjectReference? motorBinding;
-    private DotNetObjectReference<ScannerView>? motorReference;
-
-    private readonly HttpClient cameraClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(20)
-    };
-
-    private readonly HttpClient motorClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(2)
-    };
-
-    private readonly SemaphoreSlim motorGate = new(1, 1);
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OpenDevice { get; set; }
     private readonly CancellationTokenSource lifetime = new();
-
-    private string cameraIp = "";
-    private string streamUrl = "";
-
-    private string? previewFrame;
-    private CancellationTokenSource? previewCancellation;
-    private Task? previewTask;
-
-    private string? motorHost;
-
-    private string motorStatus =
-        "Hold Up or Down to move. Release to stop.";
-
-    private string foodName = "";
-    private string mealType = "Lunch";
-    private string weight = "";
-    private string calories = "";
-    private string protein = "";
-    private string carbs = "";
-    private string fat = "";
-    private string ingredients = "";
-    private string notes = "";
-    private string message = "";
-
-    private string? photoPath;
-    private string? previewData;
-
-    private bool livePreview;
-    private bool motorReady;
-    private bool busy;
-    private bool analyzing;
-    private bool saving;
-    private bool hasError;
-    private bool capturingEsp32;
-    private bool disposed;
-
-    private bool showMealPopup;
-    private bool popupSwipeStarted;
-    private double popupTouchX;
-    private double popupTouchY;
-
-    private int fileRevision;
-    private long latestMotorCommand;
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private readonly SemaphoreSlim receiptViewGate = new(1, 1);
+    private string manualAddress = "", message = "", foodName = "", mealType = "Lunch", weight = "";
+    private string calories = "", protein = "", carbs = "", fat = "", ingredients = "", notes = "";
+    private string? photoPath, previewData, draftScanId, loadingScanId, savedScanId;
+    private bool busy, analyzing, saving, hasError, disposed, connecting, showMealPopup, popupSwipeStarted;
+    private double popupTouchX, popupTouchY;
+    private string simulationScenario = "Normal";
+    private bool CanAnalyze => !busy && BotSession.CanAnalyze && photoPath != null
+        && draftScanId == BotSession.Receipt?.Scan.ScanId && savedScanId != draftScanId;
+    private string ConnectionLabel => BotSession.State switch
     {
-        if (!firstRender || disposed)
-            return;
+        CalFitBotConnectionState.Disconnected => "Disconnected",
+        CalFitBotConnectionState.Paused => "Paused",
+        CalFitBotConnectionState.Discovering or CalFitBotConnectionState.Connecting => "Connecting",
+        CalFitBotConnectionState.Receiving => "Receiving",
+        CalFitBotConnectionState.Acknowledging => "Confirming",
+        CalFitBotConnectionState.Error or CalFitBotConnectionState.RetryRequired => "Needs attention",
+        _ => "Connected"
+    };
+    private string ViewerTitle => BotSession.State == CalFitBotConnectionState.Receiving ? "Receiving photo…" : "Waiting for robot submission";
+    private bool IsSimulation
+    {
+        get
+        {
+#if DEBUG
+            return Robot is MockCalFitBotService;
+#else
+            return false;
+#endif
+        }
+    }
 
+    protected override async Task OnInitializedAsync()
+    {
+        BotSession.Changed += OnRobotChanged;
+        manualAddress = RobotAddress.LastAddress ?? "";
         try
         {
-            motorModule = await JS.InvokeAsync<IJSObjectReference>(
-                "import",
-                "./js/esp32-controls.js"
-            );
-
-            if (disposed)
-            {
-                await motorModule.DisposeAsync();
-                return;
-            }
-
-            motorReference = DotNetObjectReference.Create(this);
-
-            motorBinding = await motorModule.InvokeAsync<IJSObjectReference>(
-                "bind",
-                scannerElement,
-                motorReference
-            );
-
-            motorReady = !disposed;
-
-            if (!disposed)
-                await InvokeAsync(StateHasChanged);
+            if (Session.Profile == null) await Session.RefreshProfileAsync();
+            if (Session.Profile == null) throw new InvalidOperationException("Sign in before receiving a robot scan.");
+            await UpdateReceiptAsync();
         }
-        catch (JSException ex)
-        {
-            motorStatus = "Motor controls could not load: " + ex.Message;
-
-            if (!disposed)
-                await InvokeAsync(StateHasChanged);
-        }
+        catch (OperationCanceledException) when (disposed) { }
+        catch (Exception ex) { Show(ex.Message, true); }
     }
 
-    // =====================================
-    // MOTOR CONTROL
-    // =====================================
-
-    [JSInvokable]
-    public async Task MotorCommand(string direction, long sequence)
+    private void OnRobotChanged()
     {
-        if (disposed || sequence <= latestMotorCommand)
-            return;
-
-        latestMotorCommand = sequence;
-
-        await motorGate.WaitAsync();
-
+        if (!disposed) _ = InvokeAsync(UpdateReceiptAsync);
+    }
+    private async Task UpdateReceiptAsync()
+    {
+        if (disposed || !await receiptViewGate.WaitAsync(0, lifetime.Token)) return;
         try
         {
-            if (disposed || sequence != latestMotorCommand)
-                return;
-
-            if (direction is not ("forward" or "backward" or "stop"))
-                return;
-
-            if (direction != "stop")
+            var receipt = BotSession.Receipt;
+            if (receipt == null)
             {
-                if (busy || showMealPopup)
-                    return;
-
-                if (!TryGetCameraAddress(out var address))
-                {
-                    throw new InvalidOperationException(
-                        "Enter the ESP32's private IPv4 address."
-                    );
-                }
-
-                // Release must stop the same device that was started.
-                motorHost ??= address.ToString();
+                if (draftScanId != null && !busy) ClearDraft();
             }
-
-            if (motorHost == null)
-                return;
-
-            await SendMotorRequestAsync(motorHost, direction);
-
-            if (direction == "stop")
-                motorHost = null;
-        }
-        catch (Exception ex)
-        {
-            if (!disposed)
+            else if (!receipt.Canceled && receipt.Scan.ScanId != draftScanId && receipt.Scan.ScanId != loadingScanId)
             {
-                motorStatus = $"Motor {direction} at {motorHost}: {ex.Message}";
-                await InvokeAsync(StateHasChanged);
+                loadingScanId = receipt.Scan.ScanId;
+                byte[] jpeg = await File.ReadAllBytesAsync(receipt.PhotoPath, lifetime.Token);
+                if (disposed || BotSession.Receipt?.Scan.ScanId != receipt.Scan.ScanId) return;
+                ClearDraft();
+                draftScanId = receipt.Scan.ScanId;
+                photoPath = receipt.PhotoPath;
+                previewData = "data:image/jpeg;base64," + Convert.ToBase64String(jpeg);
+                weight = "";
             }
-
-            throw;
         }
-        finally
-        {
-            motorGate.Release();
-        }
+        catch (OperationCanceledException) when (disposed) { }
+        catch (Exception ex) { Show("Unable to display the stored scan: " + ex.Message, true); }
+        finally { loadingScanId = null; receiptViewGate.Release(); }
+        if (!disposed) StateHasChanged();
     }
 
-    private async Task SendMotorRequestAsync(
-    string host,
-    string direction)
+    private async Task Reconnect()
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"http://{host}/control?direction={direction}"
-        );
-
-        request.Version = HttpVersion.Version11;
-        request.VersionPolicy =
-            HttpVersionPolicy.RequestVersionExact;
-
-        request.Headers.ConnectionClose = true;
-
-        request.Headers.TryAddWithoutValidation(
-            "Cache-Control",
-            "no-cache"
-        );
-
-        using var response = await motorClient.SendAsync(request);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            string detail =
-                await response.Content.ReadAsStringAsync();
-
-            throw new HttpRequestException(
-                $"HTTP {(int)response.StatusCode}: {detail}"
-            );
-        }
+        if (disposed) return;
+        connecting = true;
+        try { await BotSession.ReconnectAsync(manualAddress, lifetime.Token); }
+        catch (OperationCanceledException) when (disposed) { }
+        catch (Exception ex) { Show(ex.Message, true); }
+        finally { connecting = false; }
     }
-
-    private async Task StopMotorAsync()
+    private async Task Retry()
     {
-        if (motorBinding == null)
-            return;
-
+        if (disposed) return;
+        connecting = true;
+        try { await BotSession.RetryAsync(lifetime.Token); }
+        catch (OperationCanceledException) when (disposed) { }
+        catch (Exception ex) { Show(ex.Message, true); }
+        finally { connecting = false; }
+    }
+    private async Task DiscardReceipt()
+    {
+        if (busy) return;
         try
         {
-            await motorBinding.InvokeVoidAsync("stop");
+            await BotSession.CompleteAsync(lifetime.Token);
+            ClearDraft();
+            showMealPopup = false;
         }
-        catch (JSException)
-        {
-            // The firmware timeout remains the independent fallback.
-        }
+        catch (Exception ex) { if (!disposed) Show(ex.Message, true); }
     }
 
-    // =====================================
-    // NATIVE LIVE PREVIEW
-    // =====================================
-
-    private async Task StartPreview()
-    {
-        if (busy || disposed)
-            return;
-
-        string requestedUrl = streamUrl.Trim();
-
-        if (string.IsNullOrWhiteSpace(requestedUrl)
-            && TryGetCameraAddress(out var cameraAddress))
-        {
-            requestedUrl = $"http://{cameraAddress}:81/stream";
-            streamUrl = requestedUrl;
-        }
-
-        if (!Uri.TryCreate(
-                requestedUrl,
-                UriKind.Absolute,
-                out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp
-                && uri.Scheme != Uri.UriSchemeHttps)
-            || !IPAddress.TryParse(uri.Host, out var address)
-            || address.AddressFamily != AddressFamily.InterNetwork
-            || !IsPrivateIpv4(address))
-        {
-            Show("Enter a valid private IPv4 camera stream URL.", true);
-            return;
-        }
-
-        await StopPreviewAsync();
-
-        if (disposed)
-            return;
-
-        message = "";
-        previewFrame = null;
-        livePreview = true;
-
-        var cancellation =
-            CancellationTokenSource.CreateLinkedTokenSource(
-                lifetime.Token
-            );
-
-        previewCancellation = cancellation;
-
-        previewTask = RunPreviewAsync(
-            uri.AbsoluteUri,
-            cancellation
-        );
-    }
-
-    private async Task RunPreviewAsync(
-        string url,
-        CancellationTokenSource cancellation)
-    {
-        CancellationToken token = cancellation.Token;
-
-        try
-        {
-            await Esp32Camera.ReadPreviewAsync(
-                url,
-                async frame =>
-                {
-                    string image =
-                        "data:image/jpeg;base64,"
-                        + Convert.ToBase64String(frame);
-
-                    await InvokeAsync(() =>
-                    {
-                        if (disposed
-                            || token.IsCancellationRequested
-                            || previewCancellation != cancellation)
-                        {
-                            return;
-                        }
-
-                        previewFrame = image;
-                        StateHasChanged();
-                    });
-                },
-                token
-            );
-        }
-        catch (OperationCanceledException)
-            when (token.IsCancellationRequested)
-        {
-            // Normal stop, capture, or navigation.
-        }
-        catch (Exception ex)
-        {
-            if (!disposed && !token.IsCancellationRequested)
-            {
-                await InvokeAsync(() =>
-                {
-                    if (previewCancellation != cancellation)
-                        return;
-
-                    livePreview = false;
-                    previewFrame = null;
-
-                    Show(
-                        "Live preview failed: " + ex.Message,
-                        true
-                    );
-
-                    StateHasChanged();
-                });
-
-                await StopMotorAsync();
-            }
-        }
-        finally
-        {
-            if (previewCancellation == cancellation)
-                previewCancellation = null;
-
-            cancellation.Dispose();
-        }
-    }
-
-    private async Task StopPreviewAsync()
-    {
-        Task? previousTask = previewTask;
-        previewTask = null;
-
-        var cancellation = previewCancellation;
-        previewCancellation = null;
-
-        livePreview = false;
-        previewFrame = null;
-
-        cancellation?.Cancel();
-
-        if (previousTask != null)
-            await previousTask;
-    }
-
-    // =====================================
-    // MEAL POPUP
-    // =====================================
-
-    private async Task OpenMealPopup()
-    {
-        if (disposed)
-            return;
-
-        await StopMotorAsync();
-
-        if (!disposed)
-            showMealPopup = true;
-    }
-
-    private void CloseMealPopup()
-    {
-        showMealPopup = false;
-        popupSwipeStarted = false;
-    }
-
-    private void PopupKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Escape")
-            CloseMealPopup();
-    }
-
+    private void OpenMealPopup() { if (BotSession.CanAnalyze) showMealPopup = true; }
+    private void CloseMealPopup() { showMealPopup = false; popupSwipeStarted = false; }
+    private void PopupKeyDown(KeyboardEventArgs e) { if (e.Key == "Escape") CloseMealPopup(); }
     private void PopupTouchStart(TouchEventArgs e)
     {
         popupSwipeStarted = e.Touches.Length == 1;
-
-        if (!popupSwipeStarted)
-            return;
-
-        popupTouchX = e.Touches[0].ClientX;
-        popupTouchY = e.Touches[0].ClientY;
+        if (popupSwipeStarted) { popupTouchX = e.Touches[0].ClientX; popupTouchY = e.Touches[0].ClientY; }
     }
-
     private void PopupTouchEnd(TouchEventArgs e)
     {
-        if (!popupSwipeStarted || e.ChangedTouches.Length == 0)
-            return;
-
+        if (!popupSwipeStarted || e.ChangedTouches.Length == 0) return;
         popupSwipeStarted = false;
-
-        double distanceX =
-            e.ChangedTouches[0].ClientX - popupTouchX;
-
-        double distanceY =
-            e.ChangedTouches[0].ClientY - popupTouchY;
-
-        if (Math.Abs(distanceX) >= 80
-            && Math.Abs(distanceX) > Math.Abs(distanceY) * 1.5)
-        {
-            CloseMealPopup();
-        }
+        double x = e.ChangedTouches[0].ClientX - popupTouchX, y = e.ChangedTouches[0].ClientY - popupTouchY;
+        if (Math.Abs(x) >= 80 && Math.Abs(x) > Math.Abs(y) * 1.5) CloseMealPopup();
     }
+    private void CancelPopupSwipe(TouchEventArgs e) => popupSwipeStarted = false;
 
-    private void CancelPopupSwipe(TouchEventArgs e)
+    private static double Parse(string value) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+        ? number : double.TryParse(value, out number) ? number : double.NaN;
+    private double? AnalysisWeight()
     {
-        popupSwipeStarted = false;
+        if (string.IsNullOrWhiteSpace(weight)) return null;
+        double manual = Parse(weight);
+        if (!double.IsFinite(manual) || manual <= 0) throw new InvalidOperationException("Enter a positive weight or leave it blank if unavailable.");
+        return manual;
     }
-
-    // =====================================
-    // CAMERA ADDRESS VALIDATION
-    // =====================================
-
-    private bool TryGetCameraAddress(out IPAddress address)
-    {
-        address = IPAddress.None;
-
-        if (!IPAddress.TryParse(cameraIp.Trim(), out var parsed)
-            || parsed.AddressFamily != AddressFamily.InterNetwork
-            || !IsPrivateIpv4(parsed))
-        {
-            return false;
-        }
-
-        address = parsed;
-        return true;
-    }
-
-    private static bool IsPrivateIpv4(IPAddress address)
-    {
-        byte[] bytes = address.GetAddressBytes();
-
-        return bytes[0] == 10
-            || (bytes[0] == 172
-                && bytes[1] >= 16
-                && bytes[1] <= 31)
-            || (bytes[0] == 192 && bytes[1] == 168);
-    }
-
-    // =====================================
-    // CAPTURE
-    // =====================================
-
-    private async Task CaptureEsp32Async()
-    {
-        if (busy || disposed)
-            return;
-
-        if (!TryGetCameraAddress(out var address))
-        {
-            Show("Enter a valid private IPv4 camera address.", true);
-            return;
-        }
-
-        busy = true;
-        capturingEsp32 = true;
-        message = "";
-
-        string? pendingPath = null;
-
-        try
-        {
-            await StopMotorAsync();
-            await StopPreviewAsync();
-
-            await InvokeAsync(StateHasChanged);
-            await Task.Delay(200, lifetime.Token);
-
-            using var response = await cameraClient.GetAsync(
-                $"http://{address}/capture?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
-                lifetime.Token
-            );
-
-            response.EnsureSuccessStatusCode();
-
-            byte[] image =
-                await response.Content.ReadAsByteArrayAsync(
-                    lifetime.Token
-                );
-
-            if (image.Length == 0
-                || image.Length > 10 * 1024 * 1024)
-            {
-                Show(
-                    "Camera image is empty or exceeds 10 MB.",
-                    true
-                );
-                return;
-            }
-
-            if (image.Length < 4
-                || image[0] != 0xFF
-                || image[1] != 0xD8
-                || image[^2] != 0xFF
-                || image[^1] != 0xD9)
-            {
-                Show(
-                    "Camera did not return a complete JPEG image.",
-                    true
-                );
-                return;
-            }
-
-            pendingPath = Path.Combine(
-                FileSystem.CacheDirectory,
-                $"calfit_esp32_{Guid.NewGuid():N}.jpg"
-            );
-
-            await File.WriteAllBytesAsync(
-                pendingPath,
-                image,
-                lifetime.Token
-            );
-
-            if (disposed)
-                return;
-
-            Clear();
-
-            photoPath = pendingPath;
-            pendingPath = null;
-
-            previewData =
-                "data:image/jpeg;base64,"
-                + Convert.ToBase64String(image);
-
-            fileRevision++;
-            showMealPopup = true;
-
-            Show(
-                "Image captured. Enter weight or analyze to estimate it.",
-                false
-            );
-        }
-        catch (OperationCanceledException) when (disposed)
-        {
-        }
-        catch (OperationCanceledException)
-        {
-            Show(
-                "Camera capture timed out. Check the Wi-Fi connection.",
-                true
-            );
-        }
-        catch (Exception ex)
-        {
-            Show(
-                "ESP32-CAM capture failed: " + ex.Message,
-                true
-            );
-        }
-        finally
-        {
-            DeleteCachedPhoto(pendingPath);
-
-            capturingEsp32 = false;
-            busy = false;
-
-            if (disposed)
-                DeleteCachedPhoto(photoPath);
-        }
-    }
-
-    // =====================================
-    // AI ANALYSIS
-    // =====================================
-
-    private static double Parse(string input)
-    {
-        if (double.TryParse(
-                input,
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out double value))
-        {
-            return value;
-        }
-
-        return double.TryParse(
-                input,
-                NumberStyles.Float,
-                CultureInfo.CurrentCulture,
-                out value)
-            ? value
-            : double.NaN;
-    }
-
     private async Task AnalyzeAsync()
     {
-        if (busy || disposed || photoPath == null)
-            return;
-
-        busy = true;
-        analyzing = true;
-        message = "";
-
-        int version = fileRevision;
-
+        if (!CanAnalyze) return;
+        string id = draftScanId!;
+        busy = true; analyzing = true; message = "";
         try
         {
-            double grams = Parse(weight);
-
-            var result = await Api.AnalyzeAsync(
-                Session.Token!,
-                photoPath,
-                grams > 0 && double.IsFinite(grams)
-                    ? grams
-                    : null
-            );
-
-            if (disposed || version != fileRevision)
-                return;
-
-            if (!result.IsFood)
-            {
-                Show(
-                    "The image does not appear to contain food.",
-                    true
-                );
-                return;
-            }
-
+            var result = await Api.AnalyzeAsync(Session.Token!, photoPath!, AnalysisWeight());
+            if (disposed || draftScanId != id || !BotSession.CanAnalyze) return;
+            if (!result.IsFood) { Show("The image does not appear to contain food.", true); return; }
             foodName = result.FoodName;
-
-            if (string.IsNullOrWhiteSpace(weight)
-                && double.IsFinite(result.WeightGrams)
-                && result.WeightGrams > 0)
-            {
-                weight = result.WeightGrams.ToString(
-                    "0.#",
-                    CultureInfo.InvariantCulture
-                );
-            }
-
-            calories = result.Calories.ToString(
-                CultureInfo.InvariantCulture
-            );
-
-            protein = result.ProteinGrams.ToString(
-                CultureInfo.InvariantCulture
-            );
-
-            carbs = result.CarbsGrams.ToString(
-                CultureInfo.InvariantCulture
-            );
-
-            fat = result.FatGrams.ToString(
-                CultureInfo.InvariantCulture
-            );
-
-            if (!string.IsNullOrWhiteSpace(result.Notes))
-                notes = result.Notes;
-
-            Show(
-                "AI estimate ready. Verify weight and nutrition before saving.",
-                false
-            );
+            if (string.IsNullOrWhiteSpace(weight) && double.IsFinite(result.WeightGrams) && result.WeightGrams > 0)
+                weight = result.WeightGrams.ToString("0.##", CultureInfo.InvariantCulture);
+            calories = result.Calories.ToString(CultureInfo.InvariantCulture);
+            protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture);
+            carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture);
+            fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(result.Notes)) notes = result.Notes;
+            // Photo-based grams are an estimate; preserve any value the user entered.
+            showMealPopup = true;
+            Show("Analysis ready. Review the estimates before saving.", false);
         }
-        catch (Exception ex)
-        {
-            Show(ex.Message, true);
-        }
-        finally
-        {
-            busy = false;
-            analyzing = false;
-
-            if (disposed)
-                DeleteCachedPhoto(photoPath);
-        }
+        catch (Exception ex) { Show(ex.Message, true); }
+        finally { busy = false; analyzing = false; }
     }
-
-    // =====================================
-    // SAVE TO JOURNAL
-    // =====================================
-
     private async Task SaveAsync()
     {
-        if (busy || disposed)
-            return;
-
-        double grams = string.IsNullOrWhiteSpace(weight)
-            ? 0 : Parse(weight);
-
-        double p = string.IsNullOrWhiteSpace(protein)
-            ? 0 : Parse(protein);
-
-        double c = string.IsNullOrWhiteSpace(carbs)
-            ? 0 : Parse(carbs);
-
-        double f = string.IsNullOrWhiteSpace(fat)
-            ? 0 : Parse(fat);
-
-        if (string.IsNullOrWhiteSpace(foodName)
-            || !int.TryParse(calories, out int kcal)
-            || kcal <= 0
-            || !double.IsFinite(grams) || grams < 0
-            || !double.IsFinite(p) || p < 0
-            || !double.IsFinite(c) || c < 0
-            || !double.IsFinite(f) || f < 0)
-        {
-            Show(
-                "Enter a food name, positive calories, and valid non-negative weight and macros.",
-                true
-            );
-            return;
-        }
-
-        busy = true;
-        saving = true;
-        message = "";
-
-        bool savedToServer = false;
-
+        if (busy || !BotSession.CanAnalyze || draftScanId == null || savedScanId == draftScanId) return;
+        double? grams;
+        try { grams = AnalysisWeight(); }
+        catch (Exception ex) { Show(ex.Message, true); return; }
+        double p = string.IsNullOrWhiteSpace(protein) ? 0 : Parse(protein);
+        double c = string.IsNullOrWhiteSpace(carbs) ? 0 : Parse(carbs);
+        double f = string.IsNullOrWhiteSpace(fat) ? 0 : Parse(fat);
+        if (string.IsNullOrWhiteSpace(foodName) || !int.TryParse(calories, out int kcal) || kcal <= 0
+            || !double.IsFinite(p) || p < 0 || !double.IsFinite(c) || c < 0 || !double.IsFinite(f) || f < 0)
+        { Show("Enter a food name, positive calories and valid non-negative macros.", true); return; }
+        busy = true; saving = true;
+        bool localNotesFailed = false;
         try
         {
-            var saved = await Api.SaveMealAsync(
-                Session.Token!,
-                new Meal
-                {
-                    FoodName = foodName.Trim(),
-                    MealType = mealType,
-                    WeightGrams = grams,
-                    Calories = kcal,
-                    ProteinGrams = p,
-                    CarbsGrams = c,
-                    FatGrams = f
-                }
-            );
-
-            savedToServer = true;
-
+            var saved = await Api.SaveMealAsync(Session.Token!, new Meal
+            {
+                FoodName = foodName.Trim(), MealType = mealType, WeightGrams = grams ?? 0,
+                Calories = kcal, ProteinGrams = p, CarbsGrams = c, FatGrams = f
+            });
+            savedScanId = draftScanId; // Never resubmit after the server has confirmed creation.
             try
             {
-                if (!string.IsNullOrWhiteSpace(ingredients)
-                    || !string.IsNullOrWhiteSpace(notes))
-                {
-                    Notes.Save(
-                        saved.UserId,
-                        saved.Id,
-                        new()
-                        {
-                            Ingredients = ingredients,
-                            Note = notes
-                        }
-                    );
-                }
+                if (!string.IsNullOrWhiteSpace(ingredients) || !string.IsNullOrWhiteSpace(notes))
+                    Notes.Save(saved.UserId, saved.Id, new() { Ingredients = ingredients, Note = notes });
             }
-            catch
-            {
-                Clear();
-
-                Show(
-                    "Meal saved, but its local notes could not be stored.",
-                    true
-                );
-
-                return;
-            }
-
-            Clear();
-            CloseMealPopup();
-
-            if (!disposed)
-                await OnSaved.InvokeAsync();
+            catch { localNotesFailed = true; }
+            // Finish local receipt bookkeeping even if navigation disposed this screen during the API request.
+            await BotSession.CompleteAsync(CancellationToken.None);
+            if (disposed) return;
+            showMealPopup = false;
+            ClearDraft();
+            if (localNotesFailed) Show("Meal saved, but its local notes could not be stored.", true);
+            else await OnSaved.InvokeAsync();
         }
         catch (Exception ex)
         {
-            Show(
-                savedToServer
-                    ? "Meal was saved, but the screen could not update: "
-                        + ex.Message
-                    : "Could not save meal: " + ex.Message,
-                true
-            );
+            Show(savedScanId == draftScanId ? "Meal saved; local receipt update needs attention. Do not save it again. " + ex.Message
+                : "Could not save meal: " + ex.Message, true);
         }
-        finally
-        {
-            busy = false;
-            saving = false;
-
-            if (disposed)
-                DeleteCachedPhoto(photoPath);
-        }
+        finally { busy = false; saving = false; }
     }
-
-    // =====================================
-    // DRAFT / CACHE
-    // =====================================
-
-    private void Show(string text, bool failure)
+    private void ResetNutrition()
     {
-        if (disposed)
-            return;
-
-        message = text;
-        hasError = failure;
-    }
-
-    private void Clear()
-    {
-        foodName = "";
-        mealType = "Lunch";
+        foodName = ""; mealType = "Lunch"; calories = ""; protein = ""; carbs = ""; fat = ""; ingredients = ""; notes = "";
         weight = "";
-        calories = "";
-        protein = "";
-        carbs = "";
-        fat = "";
-        ingredients = "";
-        notes = "";
-
-        message = "";
-        hasError = false;
-        previewData = null;
-
-        fileRevision++;
-
-        DeleteCachedPhoto(photoPath);
-        photoPath = null;
+        message = ""; hasError = false;
     }
-
-    private static void DeleteCachedPhoto(string? path)
+    private void ClearDraft()
     {
-        if (string.IsNullOrWhiteSpace(path))
-            return;
-
-        try
-        {
-            File.Delete(path);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
+        ResetNutrition();
+        draftScanId = null; savedScanId = null; photoPath = null; previewData = null;
     }
+    private void Show(string text, bool error) { if (!disposed) { message = text; hasError = error; } }
 
-    // =====================================
-    // CLEANUP
-    // =====================================
+    private Task SimulateSubmit()
+    {
+#if DEBUG
+        if (Robot is MockCalFitBotService mock)
+        {
+            mock.WeightGrams = null;
+            if (Enum.TryParse<CalFitBotMockScenario>(simulationScenario, out var scenario)) mock.Submit(scenario);
+            return Retry();
+        }
+#endif
+        return Task.CompletedTask;
+    }
+    private Task SimulateDuplicate()
+    {
+#if DEBUG
+        if (Robot is MockCalFitBotService mock) { mock.ReplayLastScan(); return Retry(); }
+#endif
+        return Task.CompletedTask;
+    }
+    private Task SimulateConnection()
+    {
+#if DEBUG
+        if (Robot is MockCalFitBotService mock) { mock.Connected = !mock.Connected; return Retry(); }
+#endif
+        return Task.CompletedTask;
+    }
+    private Task SimulateStandby()
+    {
+#if DEBUG
+        if (Robot is MockCalFitBotService mock) { mock.Standby = !mock.Standby; return Retry(); }
+#endif
+        return Task.CompletedTask;
+    }
+    private Task SimulateTimeout()
+    {
+#if DEBUG
+        if (Robot is MockCalFitBotService mock) { mock.SimulateTimeout = !mock.SimulateTimeout; return Retry(); }
+#endif
+        return Task.CompletedTask;
+    }
 
     public async ValueTask DisposeAsync()
     {
-        if (disposed)
-            return;
-
+        if (disposed) return;
         disposed = true;
-        motorReady = false;
-        fileRevision++;
-
-        lifetime.Cancel();
-
-        try
-        {
-            if (motorBinding != null)
-                await motorBinding.InvokeVoidAsync("dispose");
-        }
-        catch (JSException)
-        {
-        }
-
-        await motorGate.WaitAsync();
-
-        try
-        {
-            if (motorHost != null)
-                await SendMotorRequestAsync(motorHost, "stop");
-        }
-        catch (HttpRequestException)
-        {
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            motorGate.Release();
-            motorClient.Dispose();
-        }
-
-        await StopPreviewAsync();
-
-        cameraClient.Dispose();
-
-        if (!busy)
-            DeleteCachedPhoto(photoPath);
-
+        BotSession.Changed -= OnRobotChanged;
+        await lifetime.CancelAsync();
         lifetime.Dispose();
-        motorReference?.Dispose();
-
-        try
-        {
-            if (motorBinding != null)
-                await motorBinding.DisposeAsync();
-
-            if (motorModule != null)
-                await motorModule.DisposeAsync();
-        }
-        catch (JSException)
-        {
-        }
+        // The foreground app owns reception across tabs. This view only releases its subscriptions.
     }
 }
