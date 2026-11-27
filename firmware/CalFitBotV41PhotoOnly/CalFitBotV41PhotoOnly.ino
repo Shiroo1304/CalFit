@@ -158,7 +158,7 @@ void setup(){
  if(!isfinite(factor)||fabsf(factor)<0.01f)factor=0;
  factorSaved=prefsOK&&factor!=0;
  Serial.printf("[INFO] Calibration factor: %.6f\n",factor);
- Serial.println("[INFO] Tare required after boot");
+ Serial.println("[INFO] Photo-only mode: no tare or calibration required");
  cameraBegin();
  networkBegin();
  lastTouch=millis();
