@@ -1,3 +1,5 @@
+> Current app mode is photo-only. See [PHOTO-ONLY-MODE.md](PHOTO-ONLY-MODE.md). The scale-based details below describe the previous integration.
+
 # CalFitBot V4.1 compatibility review
 
 ## Assessment

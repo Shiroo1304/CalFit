@@ -1,3 +1,5 @@
+Current robot workflow: [photo-only capture and AI-estimated weight](PHOTO-ONLY-MODE.md).
+
 # CalFit Modern — .NET 10 MAUI Blazor Hybrid frontend
 
 **What this is:** A clean, redesigned Android frontend based on the two CalFit ZIP files supplied on 2026-10-18. It targets the **existing, unmodified `CalFit.Api` backend**, not a made-up new API. It replaces the old XAML-heavy frontend with a minimal native MAUI host and a Razor/HTML/CSS interface.

@@ -16,17 +16,18 @@ namespace CalFit.Services
     public sealed class CalFitApi
     {
         public static int AnalysisCalls, SaveCalls;
+        public static double? LastAnalysisGrams, LastSavedWeight;
         public string BaseUrl { get; set; } = "https://api.example.invalid/";
         public Task<bool> PingAsync() => Task.FromResult(true);
         public Task RegisterAsync(string name, string email, string password) => Task.CompletedTask;
         public Task<CalFit.Models.FoodAnalysisResult> AnalyzeAsync(string token, string file, double? grams)
         {
-            AnalysisCalls++;
+            AnalysisCalls++; LastAnalysisGrams = grams;
             return Task.FromResult(new CalFit.Models.FoodAnalysisResult
-            { IsFood = true, FoodName = "Simulated rice and chicken", Calories = 520, ProteinGrams = 32, CarbsGrams = 58, FatGrams = 14 });
+            { IsFood = true, FoodName = "Simulated rice and chicken", WeightGrams = 250, Calories = 520, ProteinGrams = 32, CarbsGrams = 58, FatGrams = 14 });
         }
         public Task<CalFit.Models.Meal> SaveMealAsync(string token, CalFit.Models.Meal meal)
-        { SaveCalls++; meal.Id = SaveCalls; meal.UserId = 1; return Task.FromResult(meal); }
+        { SaveCalls++; LastSavedWeight = meal.WeightGrams; meal.Id = SaveCalls; meal.UserId = 1; return Task.FromResult(meal); }
     }
     public sealed class MealNotesService { public void Save(int user, int id, CalFit.Models.MealNotes notes) { } }
     public sealed class PreviewAddressStore : ICalFitBotAddressStore { public string? LastAddress { get; set; } }

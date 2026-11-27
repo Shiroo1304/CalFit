@@ -36,18 +36,14 @@
             {
                 <div class="scanner-illustration">
                     <div class="lens">▧</div><strong>@ViewerTitle</strong>
-                    <p>Press CAPTURE on the robot touchscreen. Its photo and measured weight will appear here automatically.</p>
+                    <p>Press CAPTURE on the robot touchscreen. Its photo will appear here automatically.</p>
                 </div>
             }
         </div>
-        <div class="bot-weight-summary">
-            <div><small>CAPTURED WEIGHT</small><strong>@CapturedWeightText</strong></div>
-            <div><small>LIVE SCALE</small><span>@LiveWeightText</span></div>
-        </div>
-        <p class="small muted">Analysis uses the captured weight, not a later live scale reading.</p>
+        <p class="small muted">Analyze Food estimates portion weight and nutrition from the photo. Review and edit the estimates before saving.</p>
         @if (BotSession.Receipt is { Acknowledged: false, Canceled: false })
         {
-            <div class="notice info">Photo and weight are stored locally. Waiting for robot acknowledgement before analysis.</div>
+            <div class="notice info">The photo is stored locally. Waiting for robot acknowledgement before analysis.</div>
         }
         @if (BotSession.Receipt is { Canceled: true })
         {
@@ -82,12 +78,10 @@
     {
         <details class="surface form-surface bot-simulation" open>
             <summary>Development simulator · no physical robot</summary>
-            <label class="field-label" for="mock-weight">Simulated weight (g)</label>
-            <input id="mock-weight" class="field" type="number" min="0" step="0.1" @bind="simulationWeight" />
             <label class="field-label" for="mock-scenario">Next submission</label>
             <select id="mock-scenario" class="field" @bind="simulationScenario">
                 <option value="Normal">Successful transfer</option>
-                <option value="MissingWeight">Unavailable captured weight</option>
+                <option value="MissingWeight">Photo-only capture</option>
                 <option value="PhotoFailures">Photo fails twice, then succeeds</option>
                 <option value="CanceledScan">Canceled before photo arrives</option>
                 <option value="AcknowledgementFailures">Acknowledgement fails twice</option>
@@ -200,7 +194,7 @@
 
                         <div>
                             <label class="field-label" for="food-weight">
-                                Weight (g) · robot measurement
+                                Weight (g) · estimated / editable
                             </label>
 
                             <input id="food-weight"
@@ -208,9 +202,9 @@
                                    type="number"
                                    min="0"
                                    step="0.1"
-                                   placeholder="Unavailable · enter manually if known"
+                                   placeholder="Estimated after analysis, or enter manually"
                                    @bind="weight"
-                                   disabled="@(busy || BotSession.Receipt?.Scan.WeightGrams != null)" />
+                                   disabled="@busy" />
                         </div>
                     </div>
 
@@ -332,7 +326,6 @@
     private string? photoPath, previewData, draftScanId, loadingScanId, savedScanId;
     private bool busy, analyzing, saving, hasError, disposed, connecting, showMealPopup, popupSwipeStarted;
     private double popupTouchX, popupTouchY;
-    private double simulationWeight = 385;
     private string simulationScenario = "Normal";
     private bool CanAnalyze => !busy && BotSession.CanAnalyze && photoPath != null
         && draftScanId == BotSession.Receipt?.Scan.ScanId && savedScanId != draftScanId;
@@ -347,8 +340,6 @@
         _ => "Connected"
     };
     private string ViewerTitle => BotSession.State == CalFitBotConnectionState.Receiving ? "Receiving photo…" : "Waiting for robot submission";
-    private string CapturedWeightText => BotSession.Receipt?.Scan.WeightGrams is double grams ? $"{grams:0.#} g" : "— g";
-    private string LiveWeightText => BotSession.LiveWeight is double grams ? $"{grams:0.#} g" : "Unavailable";
     private bool IsSimulation
     {
         get
@@ -398,7 +389,7 @@
                 draftScanId = receipt.Scan.ScanId;
                 photoPath = receipt.PhotoPath;
                 previewData = "data:image/jpeg;base64," + Convert.ToBase64String(jpeg);
-                weight = receipt.Scan.WeightGrams?.ToString("0.#", CultureInfo.InvariantCulture) ?? "";
+                weight = "";
             }
         }
         catch (OperationCanceledException) when (disposed) { }
@@ -458,11 +449,6 @@
         ? number : double.TryParse(value, out number) ? number : double.NaN;
     private double? AnalysisWeight()
     {
-        if (BotSession.Receipt?.Scan.WeightGrams is double measured)
-        {
-            if (measured <= 0) throw new InvalidOperationException("Captured weight is 0 g. Reweigh and submit a new scan on the robot.");
-            return measured;
-        }
         if (string.IsNullOrWhiteSpace(weight)) return null;
         double manual = Parse(weight);
         if (!double.IsFinite(manual) || manual <= 0) throw new InvalidOperationException("Enter a positive weight or leave it blank if unavailable.");
@@ -479,12 +465,14 @@
             if (disposed || draftScanId != id || !BotSession.CanAnalyze) return;
             if (!result.IsFood) { Show("The image does not appear to contain food.", true); return; }
             foodName = result.FoodName;
+            if (string.IsNullOrWhiteSpace(weight) && double.IsFinite(result.WeightGrams) && result.WeightGrams > 0)
+                weight = result.WeightGrams.ToString("0.##", CultureInfo.InvariantCulture);
             calories = result.Calories.ToString(CultureInfo.InvariantCulture);
             protein = result.ProteinGrams.ToString(CultureInfo.InvariantCulture);
             carbs = result.CarbsGrams.ToString(CultureInfo.InvariantCulture);
             fat = result.FatGrams.ToString(CultureInfo.InvariantCulture);
             if (!string.IsNullOrWhiteSpace(result.Notes)) notes = result.Notes;
-            // AI never replaces the robot's measured weight or invents a sensor reading.
+            // Photo-based grams are an estimate; preserve any value the user entered.
             showMealPopup = true;
             Show("Analysis ready. Review the estimates before saving.", false);
         }
@@ -537,7 +525,7 @@
     private void ResetNutrition()
     {
         foodName = ""; mealType = "Lunch"; calories = ""; protein = ""; carbs = ""; fat = ""; ingredients = ""; notes = "";
-        weight = BotSession.Receipt?.Scan.WeightGrams?.ToString("0.#", CultureInfo.InvariantCulture) ?? "";
+        weight = "";
         message = ""; hasError = false;
     }
     private void ClearDraft()
@@ -552,8 +540,7 @@
 #if DEBUG
         if (Robot is MockCalFitBotService mock)
         {
-            if (!double.IsFinite(simulationWeight) || simulationWeight < 0) { Show("Enter a valid simulated weight.", true); return Task.CompletedTask; }
-            mock.WeightGrams = simulationWeight;
+            mock.WeightGrams = null;
             if (Enum.TryParse<CalFitBotMockScenario>(simulationScenario, out var scenario)) mock.Submit(scenario);
             return Retry();
         }

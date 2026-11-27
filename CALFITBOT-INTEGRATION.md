@@ -1,3 +1,5 @@
+> Current app mode is photo-only. See [PHOTO-ONLY-MODE.md](PHOTO-ONLY-MODE.md). The scale-based details below describe the previous integration.
+
 # CalFitBot photo and weight receiver
 
 The scanner now receives robot captures. See [the V4.1 firmware review](CALFITBOT-V4.1-REVIEW.md) for verified endpoint behavior and firmware limitations. It has no motor controls, phone camera,

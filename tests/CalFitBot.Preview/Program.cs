@@ -17,6 +17,6 @@ var app = builder.Build();
 app.UseStaticFiles();
 app.UseAntiforgery();
 app.MapGet("/css/calfit.css", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "css", "calfit.css"), "text/css"));
-app.MapGet("/test-counts", () => new { analyze = CalFitApi.AnalysisCalls, save = CalFitApi.SaveCalls });
+app.MapGet("/test-counts", () => new { analyze = CalFitApi.AnalysisCalls, save = CalFitApi.SaveCalls, analyzedWeight = CalFitApi.LastAnalysisGrams, savedWeight = CalFitApi.LastSavedWeight });
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 app.Run();

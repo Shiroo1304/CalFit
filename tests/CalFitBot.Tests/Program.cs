@@ -360,6 +360,18 @@ async Task Until(Func<bool> predicate)
     Assert(predicate(), "Timed out waiting for receiver state.");
 }
 
+Test("photo-only reception does not poll the weight endpoint", async () =>
+{
+    var (_, mock, inbox, _) = Setup();
+    var transport = new InspectingService(mock, _ => Task.CompletedTask);
+    await using var receiver = new CalFitBotSession(transport, inbox, new AddressStore());
+    await receiver.TickAsync(ct);
+    mock.Submit(CalFitBotMockScenario.MissingWeight);
+    await receiver.TickAsync(ct);
+    await receiver.TickAsync(ct);
+    Assert(transport.WeightCalls == 0 && receiver.CanAnalyze && receiver.Receipt!.Scan.WeightGrams == null);
+});
+
 int failures = 0;
 foreach (var (name, action) in tests)
 {
@@ -385,10 +397,10 @@ sealed class RejectingValidator : ICalFitBotPhotoValidator
 }
 sealed class InspectingService(ICalFitBotService inner, Func<string, Task> inspect) : ICalFitBotService
 {
-    public int Inspections, StatusCalls;
+    public int Inspections, StatusCalls, WeightCalls;
     public Task<Uri?> DiscoverAsync(CancellationToken ct) => inner.DiscoverAsync(ct);
     public Task<CalFitBotStatus> GetStatusAsync(Uri a, CancellationToken ct) { StatusCalls++; return inner.GetStatusAsync(a, ct); }
-    public Task<CalFitBotWeight> GetWeightAsync(Uri a, CancellationToken ct) => inner.GetWeightAsync(a, ct);
+    public Task<CalFitBotWeight> GetWeightAsync(Uri a, CancellationToken ct) { WeightCalls++; return inner.GetWeightAsync(a, ct); }
     public Task<CalFitBotScan?> GetScanAsync(Uri a, CancellationToken ct) => inner.GetScanAsync(a, ct);
     public Task<byte[]> GetPhotoAsync(Uri a, CalFitBotScan s, CancellationToken ct) => inner.GetPhotoAsync(a, s, ct);
     public async Task AcknowledgeAsync(Uri a, string id, CancellationToken ct) { Inspections++; await inspect(id); await inner.AcknowledgeAsync(a, id, ct); }

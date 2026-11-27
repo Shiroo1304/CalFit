@@ -243,7 +243,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
                 if (stored == null)
                 {
                     attempts[scan.ScanId] = attempts.GetValueOrDefault(scan.ScanId) + 1;
-                    Set(CalFitBotConnectionState.Receiving, "Receiving the robot photo and captured weight…");
+                    Set(CalFitBotConnectionState.Receiving, "Receiving the robot photo…");
                     var photo = await robot.GetPhotoAsync(Address!, scan, ct);
                     CalFitBotService.ValidatePhoto(scan, photo);
                     if (photoValidator != null) await photoValidator.ValidateAsync(photo, ct);
@@ -255,17 +255,10 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
                 await AckAsync(stored, ct);
                 return;
             }
-            try
-            {
-                var weight = await robot.GetWeightAsync(Address!, ct);
-                CalFitBotService.ValidateWeight(weight.WeightGrams);
-                LiveWeight = weight.WeightGrams;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception) { LiveWeight = null; } // Standby/sensor unavailable is not a disconnection.
+            LiveWeight = null; // Photo-only mode: never poll the robot scale.
             if (Receipt is { Canceled: true }) Set(CalFitBotConnectionState.Error, "Scan unavailable before acknowledgement. Submit a new scan on the robot.");
             else Set(Receipt == null ? CalFitBotConnectionState.Waiting : CalFitBotConnectionState.Received,
-                Receipt == null ? canceledNotice ?? "Connected. Press CAPTURE on CalFitBot to send a meal." : "Photo and captured weight received. Analyze when ready.");
+                Receipt == null ? canceledNotice ?? "Connected. Press CAPTURE on CalFitBot to send a meal." : "Photo received. Analyze when ready.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (CalFitBotScanCanceledException)
@@ -291,11 +284,11 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
         string id = receipt.Scan.ScanId;
         if (attempts.GetValueOrDefault("ack:" + id) >= 3)
         {
-            Set(CalFitBotConnectionState.RetryRequired, "Photo and weight are stored. Acknowledgement needs a retry; the photo will not be downloaded again.");
+            Set(CalFitBotConnectionState.RetryRequired, "The photo is stored. Acknowledgement needs a retry; the photo will not be downloaded again.");
             return;
         }
         attempts["ack:" + id] = attempts.GetValueOrDefault("ack:" + id) + 1;
-        Set(CalFitBotConnectionState.Acknowledging, "Photo and weight stored. Confirming receipt to the robot…");
+        Set(CalFitBotConnectionState.Acknowledging, "Photo stored. Confirming receipt to the robot…");
         try
         {
             await robot.AcknowledgeAsync(Address!, id, ct);
@@ -304,7 +297,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
             attempts.Remove("ack:" + id);
             if (!receipt.Consumed) Receipt = receipt;
             Set(receipt.Consumed ? CalFitBotConnectionState.Waiting : CalFitBotConnectionState.Received,
-                receipt.Consumed ? "Duplicate submission acknowledged; no duplicate meal created." : "Photo and captured weight received. Analyze when ready.");
+                receipt.Consumed ? "Duplicate submission acknowledged; no duplicate meal created." : "Photo received. Analyze when ready.");
         }
         catch (CalFitBotScanCanceledException)
         {
