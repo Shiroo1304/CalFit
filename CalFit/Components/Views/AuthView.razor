@@ -1,44 +1,57 @@
 @inject AuthSession Session
 @inject CalFitApi Api
-<div class="auth-screen">
+<div class="auth-screen auth-refreshed">
     <div class="auth-light light-one"></div><div class="auth-light light-two"></div>
-    <div class="auth-top"><div class="auth-logo">✦</div><h1>Welcome to <em>CalFit.</em></h1><p>Your nutrition. Your pace. A healthier you.</p></div>
+    <header class="auth-top">
+        <div class="auth-wordmark" aria-label="CalFit">Calfit<span>.</span></div>
+        <div class="eyebrow">A LITTLE MORE BALANCE, EVERY DAY</div>
+        <h1>Know your plate.<br /><em>Find your balance.</em></h1>
+        <p>Food, nutrition and daily progress.<br />Together in one place.</p>
+    </header>
     <form class="auth-card" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
-        <div class="eyebrow">@((register) ? "CREATE YOUR ACCOUNT" : "GOOD TO HAVE YOU BACK")</div>
-        <h2>@(register ? "Let's get started" : "Sign in to continue")</h2>
+        <div class="auth-card-heading">
+            <h2>@(register ? "Create your account" : "Welcome back")</h2>
+            <p>@(register ? "Make room for healthier habits." : "Sign in to pick up where you left off.")</p>
+        </div>
         @if (register)
         {
-            <label class="field-label" for="auth-name">Your name</label><input id="auth-name" class="field" placeholder="Full name" @bind="name" maxlength="100" autocomplete="name" />
+            <label class="field-label" for="auth-name">Your name</label><input id="auth-name" class="field" placeholder="Full name" @bind="name" maxlength="100" autocomplete="name" disabled="@busy" />
         }
-        <label class="field-label" for="auth-email">Email address</label><input id="auth-email" class="field" placeholder="you@example.com" @bind="email" type="email" autocomplete="email" />
-        <label class="field-label" for="auth-password">Password</label><input id="auth-password" class="field" placeholder="At least 8 characters" @bind="password" type="password" autocomplete="@(register ? "new-password" : "current-password")" />
+        <label class="field-label" for="auth-email">Email address</label><input id="auth-email" class="field" placeholder="you@example.com" @bind="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" disabled="@busy" />
+        <label class="field-label" for="auth-password">Password</label>
+        <div class="auth-password-field">
+            <input id="auth-password" class="field" placeholder="@(register ? "At least 8 characters" : "Enter your password")" @bind="password" type="@(showPassword ? "text" : "password")" autocomplete="@(register ? "new-password" : "current-password")" disabled="@busy" />
+            <button type="button" class="auth-password-toggle" @onclick="() => showPassword = !showPassword" disabled="@busy" aria-label="@(showPassword ? "Hide password" : "Show password")" aria-pressed="@showPassword">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />@if (showPassword) { <path d="m3 3 18 18" /> }</svg>
+            </button>
+        </div>
         @if (register)
         {
-            <label class="field-label" for="auth-confirm">Confirm password</label><input id="auth-confirm" class="field" @bind="confirm" type="password" autocomplete="new-password" />
+            <label class="field-label" for="auth-confirm">Confirm password</label><input id="auth-confirm" class="field" @bind="confirm" type="password" autocomplete="new-password" disabled="@busy" />
         }
         @if (!string.IsNullOrWhiteSpace(error)) { <div class="notice error" role="alert">@error</div> }
         @if (!string.IsNullOrWhiteSpace(success)) { <div class="notice success" role="status">@success</div> }
         <button type="submit" class="btn btn-primary full" disabled="@busy">@(busy ? "Please wait…" : register ? "Create account →" : "Sign in →")</button>
-        <div class="auth-switch">@(register ? "Already have an account?" : "New to CalFit?") <button type="button" class="inline-link" @onclick="Toggle">@(register ? "Sign in" : "Create an account")</button></div>
+        <div class="auth-switch">@(register ? "Already have an account?" : "New to CalFit?") <button type="button" class="inline-link" @onclick="Toggle" disabled="@busy">@(register ? "Sign in" : "Create an account")</button></div>
     </form>
-    <div class="auth-bottom"><button class="subtle-link" @onclick="ToggleConnection">⚙ API connection settings</button>
+    <div class="auth-bottom"><button type="button" class="subtle-link" @onclick="ToggleConnection" aria-expanded="@showConnection">API connection settings <span aria-hidden="true">@(showConnection ? "−" : "+")</span></button>
         @if (showConnection)
         {
             <div class="connection-card">
-                <label class="field-label">Backend URL</label><input class="field" @bind="baseUrl" placeholder="http://10.0.2.2:5206/" />
+                <label class="field-label" for="auth-backend-url">Backend URL</label><input id="auth-backend-url" class="field" @bind="baseUrl" type="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="https://your-server.example/" />
                 <div class="button-row"><button class="btn btn-secondary" @onclick="SaveUrl">Save address</button><button class="btn btn-outline" @onclick="TestUrl" disabled="@testing">@(testing ? "Testing…" : "Test connection")</button></div>
-                <p class="small muted">Android emulator: 10.0.2.2. Physical phone over USB: 127.0.0.1 after <code>adb reverse tcp:5206 tcp:5206</code>. Wi-Fi: use your PC's LAN IP and a reachable API binding.</p>
+                <p class="small muted">Use the current HTTPS address for your CalFit backend, including your Cloudflare tunnel address. Save it before signing in.</p>
                 @if (!string.IsNullOrWhiteSpace(connectionMessage)) { <p class="small">@connectionMessage</p> }
             </div>
         }
     </div>
 </div>
 @code {
-    private bool register, busy, showConnection, testing;
+    private bool register, busy, showConnection, testing, showPassword;
     private string name = "", email = "", password = "", confirm = "", error = "", success = "", connectionMessage = "";
     private string baseUrl = "";
     protected override void OnInitialized() => baseUrl = Api.BaseUrl;
-    private void Toggle() { register = !register; error = ""; success = ""; password = ""; confirm = ""; }
+    private void Toggle() { showPassword = false; register = !register; error = ""; success = ""; password = ""; confirm = ""; }
     private void ToggleConnection() { showConnection = !showConnection; baseUrl = Api.BaseUrl; connectionMessage = ""; }
     private async Task SubmitAsync()
     {

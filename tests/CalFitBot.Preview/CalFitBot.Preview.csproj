@@ -9,6 +9,7 @@
     <Compile Include="../../CalFit/Models/CalFitBotModels.cs" Link="BotModels.cs" />
     <Compile Include="../../CalFit/Models/ApiModels.cs" Link="ApiModels.cs" />
     <Compile Include="../../CalFit/Services/CalFitBot/*.cs" Exclude="../../CalFit/Services/CalFitBot/CalFitBotPlatform.cs" Link="%(Filename)%(Extension)" />
+    <RazorComponent Include="../../CalFit/Components/Views/AuthView.razor" Link="Components/AuthView.razor" />
     <RazorComponent Include="../../CalFit/Components/Views/ScannerView.razor" Link="Components/ScannerView.razor" />
     <Content Include="../../CalFit/wwwroot/css/calfit.css" Link="wwwroot/css/calfit.css" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../CalFit/Resources/Raw/calfitbot_sample.jpg" Link="sample.jpg" CopyToOutputDirectory="PreserveNewest" />

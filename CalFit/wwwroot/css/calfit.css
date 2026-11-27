@@ -2418,3 +2418,57 @@ html, body {
 .bot-connection-settings { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--surface-border); }
 .bot-connection-settings summary, .bot-simulation summary { cursor: pointer; color: var(--accent); font-weight: 700; }
 .bot-simulation { margin-top: 18px; }
+
+/* Login refresh uses the existing theme tokens. */
+.auth-refreshed {
+    padding: clamp(28px, 6vh, 64px) 24px 40px;
+    background: radial-gradient(ellipse at 100% 0%, var(--accent-soft), transparent 55%);
+}
+.auth-refreshed .auth-top { padding-bottom: 28px; }
+.auth-wordmark {
+    display: inline-block;
+    margin-bottom: 36px;
+    font-weight: 850;
+    font-size: 30px;
+    letter-spacing: -1.5px;
+    color: var(--text);
+}
+.auth-wordmark span { color: var(--accent); }
+.auth-refreshed .auth-top .eyebrow { font-size: 9px; letter-spacing: 1.7px; margin-bottom: 14px; }
+.auth-refreshed .auth-top h1 { font-size: clamp(30px, 8.2vw, 40px); line-height: 1.15; letter-spacing: -1.5px; }
+.auth-refreshed .auth-top p { font-size: 14px; line-height: 1.65; margin-top: 16px; }
+.auth-refreshed .auth-card { padding: 26px 22px; border-radius: 22px; box-shadow: 0 14px 40px var(--shadow); }
+.auth-card-heading { margin-bottom: 24px; }
+.auth-refreshed .auth-card-heading h2 { font-size: 24px; margin: 0 0 7px; letter-spacing: -.8px; }
+.auth-card-heading p { color: var(--muted); font-size: 12px; margin: 0; line-height: 1.6; }
+.auth-refreshed .field-label { margin-top: 18px; font-size: 12px; }
+.auth-refreshed .field { min-height: 50px; border-radius: 12px; }
+.auth-password-field { position: relative; }
+.auth-password-field .field { padding-right: 52px; }
+.auth-password-toggle {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+}
+.auth-password-toggle svg { width: 21px; height: 21px; }
+.auth-password-toggle:hover { background: var(--accent-soft); color: var(--accent); }
+.auth-password-toggle:focus-visible, .auth-refreshed .subtle-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.auth-refreshed .auth-card .btn { margin-top: 24px; min-height: 52px; border-radius: 12px; font-size: 14px; }
+.auth-refreshed .auth-switch { border-top: 1px solid var(--surface-border); padding-top: 19px; margin-top: 22px; line-height: 1.8; }
+.auth-refreshed .auth-bottom { margin-top: 23px; }
+.auth-refreshed .auth-bottom > .subtle-link { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; color: var(--muted); font-size: 12px; }
+.auth-refreshed .connection-card .button-row { flex-wrap: wrap; }
+@media (max-height: 740px) {
+    .auth-refreshed { padding-top: 24px; }
+    .auth-refreshed .auth-wordmark { margin-bottom: 24px; }
+    .auth-refreshed .auth-top { padding-bottom: 22px; }
+}

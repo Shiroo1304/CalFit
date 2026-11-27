@@ -11,10 +11,14 @@ namespace CalFit.Services
         public string? Token => "browser-test-token";
         public CalFit.Models.UserProfile? Profile { get; } = new() { Id = 1, Name = "Preview" };
         public Task RefreshProfileAsync() => Task.CompletedTask;
+        public Task SignInAsync(string email, string password) => Task.CompletedTask;
     }
     public sealed class CalFitApi
     {
         public static int AnalysisCalls, SaveCalls;
+        public string BaseUrl { get; set; } = "https://api.example.invalid/";
+        public Task<bool> PingAsync() => Task.FromResult(true);
+        public Task RegisterAsync(string name, string email, string password) => Task.CompletedTask;
         public Task<CalFit.Models.FoodAnalysisResult> AnalyzeAsync(string token, string file, double? grams)
         {
             AnalysisCalls++;
