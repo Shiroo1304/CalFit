@@ -231,7 +231,7 @@ Test("acknowledgement 404 retains receipt but blocks successful submission", asy
     Assert(!session.CanAnalyze && session.Receipt is { Canceled: true });
     Assert((await inbox.FindAsync("", id, ct)) is { Canceled: true, Acknowledged: false });
 });
-Test("leaving scanner cancels its poll loop", async () =>
+Test("disposing the shared receiver session cancels its poll loop", async () =>
 {
     var (_, m, inbox, _) = Setup(); var counter = new InspectingService(m, _ => Task.CompletedTask);
     var session = new CalFitBotSession(counter, inbox, new AddressStore());
@@ -249,6 +249,116 @@ Test("standby preserves a pending submitted scan", async () =>
     Assert(session.CanAnalyze && session.Receipt!.Scan.WeightGrams == 385 && m.Standby);
     await session.DisposeAsync();
 });
+
+
+Test("V4.1 handlers: capture becomes pending, ACK is repeatable, standby weight may be null", async () =>
+{
+    bool pending = true, acknowledged = false;
+    const string id = "a82f45-b1239c";
+    using var client = new HttpClient(new Handler(request =>
+    {
+        string path = request.RequestUri!.AbsolutePath;
+        if (request.Method == HttpMethod.Get && path == "/status")
+            return JsonResponse(new { device = "CalFitBot", protocol = 1, pending });
+        if (request.Method == HttpMethod.Get && path == "/weight")
+            return JsonResponse(new { weightGrams = (double?)null });
+        if (request.Method == HttpMethod.Get && path == "/scan")
+            return pending ? JsonResponse(new { scanId = id, weightGrams = 385.25, photoBytes = jpeg.Length })
+                : new HttpResponseMessage(HttpStatusCode.NoContent);
+        if (request.Method == HttpMethod.Get && path == "/photo")
+            return pending && request.RequestUri.Query == "?id=" + id
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(jpeg) }
+                : new HttpResponseMessage(HttpStatusCode.NotFound);
+        if (request.Method == HttpMethod.Post && path == "/ack")
+        {
+            if (request.RequestUri.Query != "?id=" + id || (!pending && !acknowledged))
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            pending = false; acknowledged = true;
+            return JsonResponse(new { ok = true });
+        }
+        return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+    }));
+    var robot = new CalFitBotService(client, new Discovery());
+    Assert((await robot.GetStatusAsync(address, ct)).Pending);
+    Assert((await robot.GetWeightAsync(address, ct)).WeightGrams == null);
+    var scan = await robot.GetScanAsync(address, ct);
+    Assert(scan!.WeightGrams == 385.25);
+    Assert((await robot.GetPhotoAsync(address, scan, ct)).SequenceEqual(jpeg));
+    await robot.AcknowledgeAsync(address, id, ct);
+    await robot.AcknowledgeAsync(address, id, ct);
+    Assert(!(await robot.GetStatusAsync(address, ct)).Pending);
+    Assert(await robot.GetScanAsync(address, ct) == null);
+    await Throws<CalFitBotScanCanceledException>(() => robot.GetPhotoAsync(address, scan, ct));
+});
+Test("foreground receiver detects capture without a scanner view and notifies once", async () =>
+{
+    var (session, mock, _, _) = Setup();
+    var activity = new CalFitAppActivity(); activity.SetActive(true);
+    await using var receiver = new CalFitBotForegroundReceiver(session, activity);
+    int notifications = 0;
+    receiver.ScanReady += id => { notifications++; receiver.MarkPresented(id); };
+    await receiver.SetOwnerAsync("user");
+    mock.Submit();
+    await session.TickAsync(ct);
+    await Until(() => session.CanAnalyze);
+    Assert(notifications == 1 && mock.AckCalls == 1);
+    await session.TickAsync(ct);
+    Assert(notifications == 1);
+    activity.SetActive(false); await receiver.SetOwnerAsync("user");
+    activity.SetActive(true); await receiver.SetOwnerAsync("user");
+    Assert(notifications == 1 && session.CanAnalyze);
+});
+Test("background capture stays on robot; foreground resume receives and presents it", async () =>
+{
+    var (session, mock, _, _) = Setup();
+    var activity = new CalFitAppActivity(); activity.SetActive(true);
+    await using var receiver = new CalFitBotForegroundReceiver(session, activity);
+    int notifications = 0; receiver.ScanReady += _ => notifications++;
+    await receiver.SetOwnerAsync("user");
+    activity.SetActive(false); await receiver.SetOwnerAsync("user");
+    mock.Submit(); await session.TickAsync(ct);
+    Assert(session.IsPaused && mock.PhotoDownloads == 0 && mock.PendingScanId != null && notifications == 0);
+    activity.SetActive(true); await receiver.SetOwnerAsync("user");
+    await Until(() => session.CanAnalyze);
+    Assert(mock.PhotoDownloads == 1 && notifications == 1 && mock.PendingScanId == null);
+});
+Test("background interrupts transfer without ACK and resume retries safely", async () =>
+{
+    var (_, mock, inbox, _) = Setup(); mock.Submit();
+    var blocking = new BlockingPhotoService(mock);
+    await using var session = new CalFitBotSession(blocking, inbox, new AddressStore());
+    var activity = new CalFitAppActivity(); activity.SetActive(true);
+    await using var receiver = new CalFitBotForegroundReceiver(session, activity);
+    await receiver.SetOwnerAsync("user");
+    await Until(() => blocking.Started);
+    activity.SetActive(false); await receiver.SetOwnerAsync("user");
+    Assert(session.IsPaused && session.Receipt == null && mock.AckCalls == 0 && blocking.Canceled);
+    blocking.Block = false;
+    activity.SetActive(true); await receiver.SetOwnerAsync("user");
+    await Until(() => session.CanAnalyze);
+    Assert(mock.AckCalls == 1 && mock.PhotoDownloads == 1);
+});
+Test("sign-out stops reception and another account cannot see the previous receipt", async () =>
+{
+    var (session, mock, _, _) = Setup();
+    var activity = new CalFitAppActivity(); activity.SetActive(true);
+    await using var receiver = new CalFitBotForegroundReceiver(session, activity);
+    await receiver.SetOwnerAsync("first"); mock.Submit(); await session.TickAsync(ct);
+    await Until(() => session.CanAnalyze);
+    string first = session.Receipt!.Scan.ScanId;
+    await receiver.SetOwnerAsync(null);
+    Assert(session.Receipt == null && session.IsPaused);
+    await receiver.SetOwnerAsync("second");
+    Assert(session.Receipt == null);
+    await receiver.SetOwnerAsync("first");
+    Assert(session.Receipt?.Scan.ScanId == first && session.CanAnalyze);
+});
+
+async Task Until(Func<bool> predicate)
+{
+    for (int i = 0; i < 300 && !predicate(); i++) await Task.Delay(10);
+    Assert(predicate(), "Timed out waiting for receiver state.");
+}
 
 int failures = 0;
 foreach (var (name, action) in tests)
@@ -282,4 +392,24 @@ sealed class InspectingService(ICalFitBotService inner, Func<string, Task> inspe
     public Task<CalFitBotScan?> GetScanAsync(Uri a, CancellationToken ct) => inner.GetScanAsync(a, ct);
     public Task<byte[]> GetPhotoAsync(Uri a, CalFitBotScan s, CancellationToken ct) => inner.GetPhotoAsync(a, s, ct);
     public async Task AcknowledgeAsync(Uri a, string id, CancellationToken ct) { Inspections++; await inspect(id); await inner.AcknowledgeAsync(a, id, ct); }
+}
+
+sealed class BlockingPhotoService(ICalFitBotService inner) : ICalFitBotService
+{
+    public bool Block = true, Started, Canceled;
+    public Task<Uri?> DiscoverAsync(CancellationToken ct) => inner.DiscoverAsync(ct);
+    public Task<CalFitBotStatus> GetStatusAsync(Uri a, CancellationToken ct) => inner.GetStatusAsync(a, ct);
+    public Task<CalFitBotWeight> GetWeightAsync(Uri a, CancellationToken ct) => inner.GetWeightAsync(a, ct);
+    public Task<CalFitBotScan?> GetScanAsync(Uri a, CancellationToken ct) => inner.GetScanAsync(a, ct);
+    public async Task<byte[]> GetPhotoAsync(Uri a, CalFitBotScan scan, CancellationToken ct)
+    {
+        Started = true;
+        if (Block)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) { Canceled = true; throw; }
+        }
+        return await inner.GetPhotoAsync(a, scan, ct);
+    }
+    public Task AcknowledgeAsync(Uri a, string id, CancellationToken ct) => inner.AcknowledgeAsync(a, id, ct);
 }

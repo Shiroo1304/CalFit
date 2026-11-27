@@ -1,4 +1,35 @@
 @page "/"
-<div class="calfit-app theme-emerald"><div class="mobile-shell"><ScannerView OnSaved="AfterSaved" /></div></div>
+@inject CalFit.Services.CalFitBotForegroundReceiver Receiver
+@inject CalFit.Services.CalFitAppActivity Activity
+@inject CalFit.Services.ICalFitBotService Robot
+@implements IAsyncDisposable
+<div class="calfit-app theme-emerald"><div class="mobile-shell">
+    <button @onclick="() => scanning = !scanning">@(scanning ? "Test: other tab" : "Test: scanner tab")</button>
+    <button @onclick="ToggleActivity">Test: background / resume</button>
+    @if (scanning) { <ScannerView OnSaved="AfterSaved" /> }
+    else
+    {
+        <p id="other-tab">Another app tab</p>
+        <button @onclick="Capture">Test: robot CAPTURE</button>
+    }
+</div></div>
 @if (saved) { <p role="status" id="saved-result">Meal saved to test journal.</p> }
-@code { private bool saved; private void AfterSaved() => saved = true; }
+@code {
+    private bool saved, scanning = true;
+    protected override async Task OnInitializedAsync()
+    {
+        Receiver.ScanReady += Received;
+        await Receiver.SetOwnerAsync("1");
+    }
+    private void Received(string scanId) => _ = InvokeAsync(() =>
+    {
+        if (!Activity.IsActive) return;
+        scanning = true;
+        Receiver.MarkPresented(scanId);
+        StateHasChanged();
+    });
+    private void ToggleActivity() => Activity.SetActive(!Activity.IsActive);
+    private void Capture() => ((CalFit.Services.MockCalFitBotService)Robot).Submit();
+    private void AfterSaved() => saved = true;
+    public async ValueTask DisposeAsync() { Receiver.ScanReady -= Received; await Receiver.DisposeAsync(); }
+}

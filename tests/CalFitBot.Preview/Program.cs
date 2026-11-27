@@ -11,6 +11,8 @@ builder.Services.AddScoped<ICalFitBotService>(_ => new MockCalFitBotService(
     File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "sample.jpg"))));
 builder.Services.AddScoped(_ => new CalFitBotInbox(Path.Combine(Path.GetTempPath(), "calfitbot-preview-" + Guid.NewGuid())));
 builder.Services.AddScoped<CalFitBotSession>();
+builder.Services.AddScoped(_ => { var activity = new CalFitAppActivity(); activity.SetActive(true); return activity; });
+builder.Services.AddScoped<CalFitBotForegroundReceiver>();
 var app = builder.Build();
 app.UseStaticFiles();
 app.UseAntiforgery();

@@ -2,10 +2,12 @@ using CalFit.Models;
 
 namespace CalFit.Services;
 
-// One instance per scanner. A single gate covers polling, manual reconnect and receipt updates.
+// One shared receiver per signed-in app. Views subscribe without owning its polling lifetime.
 public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inbox, ICalFitBotAddressStore settings, ICalFitBotPhotoValidator? photoValidator = null) : IAsyncDisposable
 {
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly SemaphoreSlim lifecycleGate = new(1, 1);
+    private readonly object cancellationSync = new();
     private readonly Dictionary<string, int> attempts = new();
     private CancellationTokenSource? lifetime;
     private Task? pollTask;
@@ -15,6 +17,8 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
     private int metadataFailures;
     private string? canceledNotice;
     private bool disposed;
+    private bool initialized;
+    public bool IsPaused { get; private set; }
     public event Action? Changed;
     public Uri? Address { get; private set; }
     public CalFitBotConnectionState State { get; private set; } = CalFitBotConnectionState.Disconnected;
@@ -30,11 +34,67 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
 
     public async Task StartAsync(string userId, CancellationToken ct = default)
     {
-        if (lifetime != null) return;
-        owner = userId;
-        Receipt = await inbox.LatestAsync(owner, ct);
-        lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        pollTask = PollAsync(lifetime.Token);
+        await lifecycleGate.WaitAsync(ct);
+        try
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (lifetime is { IsCancellationRequested: false }) return;
+            if (pollTask != null) await pollTask;
+            lock (cancellationSync) { lifetime?.Dispose(); lifetime = null; }
+            if (!initialized || owner != userId)
+            {
+                owner = userId;
+                Receipt = await inbox.LatestAsync(owner, ct);
+                initialized = true;
+            }
+            CancellationToken token;
+            lock (cancellationSync)
+            {
+                IsPaused = false;
+                lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                token = lifetime.Token;
+            }
+            pollTask = PollAsync(token);
+        }
+        finally { lifecycleGate.Release(); }
+    }
+
+    public void CancelPending()
+    {
+        lock (cancellationSync) { IsPaused = true; lifetime?.Cancel(); }
+    }
+
+    public async Task PauseAsync()
+    {
+        CancelPending();
+        await lifecycleGate.WaitAsync();
+        try
+        {
+            if (pollTask != null) await pollTask;
+            // Also drain an explicit reconnect/retry that was using the same lifetime.
+            await gate.WaitAsync();
+            try
+            {
+                lock (cancellationSync) { lifetime?.Dispose(); lifetime = null; }
+                pollTask = null;
+                Set(CalFitBotConnectionState.Paused, "Reception paused while the app is inactive. Pending scans stay on the robot.");
+            }
+            finally { gate.Release(); }
+        }
+        finally { lifecycleGate.Release(); }
+    }
+
+    public async Task ResetAsync()
+    {
+        await PauseAsync();
+        await gate.WaitAsync();
+        try
+        {
+            owner = ""; initialized = false; Receipt = null; Address = null; LiveWeight = null;
+            manualAddress = null; reconnectTicks = 0; metadataFailures = 0; canceledNotice = null; attempts.Clear();
+            Set(CalFitBotConnectionState.Disconnected, "Sign in to receive robot scans.");
+        }
+        finally { gate.Release(); }
     }
 
     public async Task ReconnectAsync(string? address, CancellationToken ct)
@@ -108,7 +168,10 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
     // Public for deterministic simulator/transport tests; simultaneous callers are skipped.
     public async Task TickAsync(CancellationToken ct)
     {
-        if (disposed || !await gate.WaitAsync(0, ct)) return;
+        if (disposed || IsPaused) return;
+        using var linked = LinkToLifetime(ct);
+        ct = linked?.Token ?? ct;
+        if (!await gate.WaitAsync(0, ct)) return;
         try
         {
             if (Address == null)
@@ -202,7 +265,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
             catch (Exception) { LiveWeight = null; } // Standby/sensor unavailable is not a disconnection.
             if (Receipt is { Canceled: true }) Set(CalFitBotConnectionState.Error, "Scan unavailable before acknowledgement. Submit a new scan on the robot.");
             else Set(Receipt == null ? CalFitBotConnectionState.Waiting : CalFitBotConnectionState.Received,
-                Receipt == null ? canceledNotice ?? "Connected. Capture and SUBMIT a meal on CalFitBot." : "Photo and captured weight received. Analyze when ready.");
+                Receipt == null ? canceledNotice ?? "Connected. Press CAPTURE on CalFitBot to send a meal." : "Photo and captured weight received. Analyze when ready.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (CalFitBotScanCanceledException)
@@ -215,6 +278,12 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
             Set(CalFitBotConnectionState.Error, "Transfer failed: " + ex.Message);
         }
         finally { gate.Release(); }
+    }
+
+    private CancellationTokenSource? LinkToLifetime(CancellationToken ct)
+    {
+        lock (cancellationSync)
+            return lifetime != null ? CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.Token) : null;
     }
 
     private async Task AckAsync(CalFitBotReceipt receipt, CancellationToken ct)
@@ -262,9 +331,7 @@ public sealed class CalFitBotSession(ICalFitBotService robot, CalFitBotInbox inb
     public async ValueTask DisposeAsync()
     {
         if (disposed) return;
+        await PauseAsync();
         disposed = true;
-        if (lifetime != null) await lifetime.CancelAsync();
-        if (pollTask != null) { try { await pollTask; } catch (OperationCanceledException) { } }
-        lifetime?.Dispose();
     }
 }

@@ -36,7 +36,7 @@
             {
                 <div class="scanner-illustration">
                     <div class="lens">▧</div><strong>@ViewerTitle</strong>
-                    <p>Capture and press SUBMIT on the robot touchscreen. The photo and weight will appear here.</p>
+                    <p>Press CAPTURE on the robot touchscreen. Its photo and measured weight will appear here automatically.</p>
                 </div>
             }
         </div>
@@ -339,6 +339,7 @@
     private string ConnectionLabel => BotSession.State switch
     {
         CalFitBotConnectionState.Disconnected => "Disconnected",
+        CalFitBotConnectionState.Paused => "Paused",
         CalFitBotConnectionState.Discovering or CalFitBotConnectionState.Connecting => "Connecting",
         CalFitBotConnectionState.Receiving => "Receiving",
         CalFitBotConnectionState.Acknowledging => "Confirming",
@@ -368,7 +369,6 @@
         {
             if (Session.Profile == null) await Session.RefreshProfileAsync();
             if (Session.Profile == null) throw new InvalidOperationException("Sign in before receiving a robot scan.");
-            await BotSession.StartAsync(Session.Profile.Id.ToString(CultureInfo.InvariantCulture), lifetime.Token);
             await UpdateReceiptAsync();
         }
         catch (OperationCanceledException) when (disposed) { }
@@ -595,8 +595,7 @@
         disposed = true;
         BotSession.Changed -= OnRobotChanged;
         await lifetime.CancelAsync();
-        await BotSession.DisposeAsync();
         lifetime.Dispose();
-        // Robot photos are durable inbox data; navigation must never delete them.
+        // The foreground app owns reception across tabs. This view only releases its subscriptions.
     }
 }

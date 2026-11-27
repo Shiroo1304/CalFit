@@ -1,6 +1,6 @@
 # CalFitBot photo and weight receiver
 
-The scanner now receives robot submissions. It has no motor controls, phone camera,
+The scanner now receives robot captures. See [the V4.1 firmware review](CALFITBOT-V4.1-REVIEW.md) for verified endpoint behavior and firmware limitations. It has no motor controls, phone camera,
 ESP32 capture button or live preview. Those tasks belong to the robot touchscreen.
 The existing CalFit themes, navigation, meal review popup, AI API client and journal
 save endpoint remain in use. No robot firmware or backend files were changed.
@@ -47,14 +47,14 @@ dotnet build .\CalFit\CalFit.csproj -t:SignAndroidPackage -c Debug -f net10.0-an
 ## Physical CalFitBot connection
 
 1. Enable the phone hotspot and connect the robot using its existing firmware.
-2. Start the real-device app build, sign in and open Food Scanner.
+2. Start the real-device app build and sign in. Foreground reception runs across all tabs; Food Scanner shows status and connection settings.
 3. Discovery tries the last verified address, native Android NSD for
    `_calfitbot._tcp.local.`, then `http://calfitbot.local/`.
 4. If discovery is blocked by the hotspot implementation, expand Robot connection,
    enter the current private robot IP (no endpoint path), and tap Connect/reconnect.
    Clear the field to return to automatic discovery. Only protocol-verified
    successful addresses are remembered; no robot IP is hardcoded.
-5. Capture, review and SUBMIT on the robot. The app receives the JPEG and captured
+5. Press CAPTURE on the V4.1 robot touchscreen. The app receives the JPEG and captured
    grams, stores them together, then POSTs acknowledgement. The robot can return
    to its own live camera mode without waiting for AI analysis.
 6. Manually Analyze Food, review, and Save to journal.
@@ -81,9 +81,9 @@ made by the receiver. The optional live weight read does not wake the display.
 
 ## Persistence, recovery and limits
 
-- One poll loop per scanner, scheduled every two seconds, never overlapping. Slow
+- One shared poll loop per signed-in foreground app, scheduled every two seconds, never overlapping. Slow
   requests stretch the interval rather than start additional requests. Discovery
-  and reconnects are bounded; leaving the scanner cancels pending operations.
+  and reconnects are bounded; leaving the scanner keeps reception active; backgrounding, closing the app or signing out cancels reception. Pending scans resume on return.
 - Metadata requests time out after 4 s; photo transfers after 20 s. Photos are capped
   at 10 MiB, checked against photoBytes and JPEG markers, and decoded through Android
   BitmapFactory before committing. Oversized decoded dimensions are rejected.
@@ -178,5 +178,5 @@ NSD/multicast on the hotspot-hosting phone; calfitbot.local resolution; manual I
 fallback; reconnect after DHCP/IP changes; real JPEG decoding; weight calibration
 and null standby readings; cancel/submit races; repeated acknowledgement behavior;
 20 s transfer interruptions; router/mobile-data access to the cloud backend; app
-navigation cancellation; theme/font/accessibility and device safe areas. The HTTP
+background cancellation and foreground resume; theme/font/accessibility and device safe areas. The HTTP
 protocol identifies the robot by device/protocol fields, not cryptographic pairing.

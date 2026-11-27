@@ -20,6 +20,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<AuthSession>();
         builder.Services.AddSingleton<AppearanceService>();
         builder.Services.AddSingleton<MealNotesService>();
+        builder.Services.AddSingleton<CalFitAppActivity>();
         builder.Services.AddSingleton<ICalFitBotAddressStore, CalFitBotAddressStore>();
         builder.Services.AddSingleton(new CalFitBotInbox(
             Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory,
@@ -46,7 +47,8 @@ public static class MauiProgram
             });
 #endif
         builder.Services.AddSingleton<ICalFitBotPhotoValidator, CalFit.Platforms.Android.AndroidCalFitBotPhotoValidator>();
-        builder.Services.AddTransient<CalFitBotSession>();
+        builder.Services.AddScoped<CalFitBotSession>();
+        builder.Services.AddScoped<CalFitBotForegroundReceiver>();
 
         return builder.Build();
     }
